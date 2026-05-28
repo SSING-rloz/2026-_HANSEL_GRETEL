@@ -3,123 +3,70 @@ import time
 import threading
 import RPi.GPIO as GPIO
 
-# ============================================================
-# Node control code
-# Node1_control.py / Node2_control.py 공통
-#
-# L298N + 엔코더 속도 피드백 제어
-#
-# 주행 명령:
-#   forward
-#   backward
-#   forward_left
-#   forward_right
-#   backward_left
-#   backward_right
-#   left
-#   right
-#   stop
-#
-# 엔코더 배선:
-#   왼쪽 A -> GPIO5,  물리핀 29
-#   왼쪽 B -> GPIO6,  물리핀 31
-#   오른쪽 A -> GPIO16, 물리핀 36
-#   오른쪽 B -> GPIO26, 물리핀 37
-#
-# 주의:
-#   엔코더 출력이 5V이면 라즈베리파이 GPIO에 직접 연결 금지.
-#   반드시 3.3V 출력 또는 레벨시프터 사용.
-# ============================================================
-
-
-UNIT_NAME = "NODE1"
-
-
-# =========================
-# L298N 모터 GPIO 핀
-# =========================
+UNIT_NAME = "NODE2"
 
 ENA_PIN = 18
 IN1_PIN = 23
 IN2_PIN = 24
-
 ENB_PIN = 13
 IN3_PIN = 27
 IN4_PIN = 22
 
-
-# =========================
-# 엔코더 GPIO 핀
-# =========================
-
-LEFT_ENC_A = 5
-LEFT_ENC_B = 6
-
+LEFT_ENC_A = 20
+LEFT_ENC_B = 21
 RIGHT_ENC_A = 16
 RIGHT_ENC_B = 26
 
-
-# =========================
-# 서버 설정
-# =========================
+DETACH_SERVO_PIN = 6
 
 HOST = "0.0.0.0"
 PORT = 5000
-
-
-# =========================
-# PWM / PID 설정
-# =========================
+UDP_BUFFER_SIZE = 1024
 
 PWM_FREQ = 1000
-
 CONTROL_INTERVAL = 0.05
-
 MIN_PWM = 25
 MAX_PWM = 100
 
 FULL_SPEED_CPS_LEFT = 800.0
 FULL_SPEED_CPS_RIGHT = 800.0
 
-TURN_INNER_RATIO = 0.45
-TURN_OUTER_RATIO = 1.00
-SPIN_RATIO = 0.85
+NODE_SLOW_RATIO = 0.35
 
 KP_LEFT = 0.035
 KI_LEFT = 0.015
 KD_LEFT = 0.000
-
 KP_RIGHT = 0.035
 KI_RIGHT = 0.015
 KD_RIGHT = 0.000
 
+SERVO_FREQ = 50
 
-# =========================
-# 전역 상태 변수
-# =========================
+current_detach_servo_angle = 20
+DETACH_SERVO_MIN_ANGLE = 0
+DETACH_SERVO_MAX_ANGLE = 180
+DETACH_REST_ANGLE = 20
+DETACH_PRESS_ANGLE = 75
+DETACH_PRESS_TIME = 0.35
+START_DETACH_SERVO_REST_ON_BOOT = True
+DETACH_SERVO_HOLD = False
 
 running = True
 
 left_count = 0
 right_count = 0
-
 left_last_state = 0
 right_last_state = 0
-
 encoder_lock = threading.Lock()
 
 left_target_cps = 0.0
 right_target_cps = 0.0
-
 left_direction = "stop"
 right_direction = "stop"
-
 left_pwm_value = 0.0
 right_pwm_value = 0.0
-
 left_integral = 0.0
 right_integral = 0.0
-
 left_prev_error = 0.0
 right_prev_error = 0.0
 
@@ -127,9 +74,34 @@ last_debug_time = 0.0
 DEBUG_PRINT_INTERVAL = 0.5
 
 
-# =========================
-# GPIO 초기화
-# =========================
+def check_duplicate_pins():
+    pin_map = {
+        "ENA_PIN": ENA_PIN,
+        "IN1_PIN": IN1_PIN,
+        "IN2_PIN": IN2_PIN,
+        "ENB_PIN": ENB_PIN,
+        "IN3_PIN": IN3_PIN,
+        "IN4_PIN": IN4_PIN,
+        "LEFT_ENC_A": LEFT_ENC_A,
+        "LEFT_ENC_B": LEFT_ENC_B,
+        "RIGHT_ENC_A": RIGHT_ENC_A,
+        "RIGHT_ENC_B": RIGHT_ENC_B,
+        "DETACH_SERVO_PIN": DETACH_SERVO_PIN,
+    }
+    used = {}
+    for name, pin in pin_map.items():
+        if pin in used:
+            raise RuntimeError(f"GPIO pin conflict: {name} and {used[pin]} both use GPIO{pin}")
+        used[pin] = name
+    print(f"[{UNIT_NAME}] PIN CHECK OK. No duplicated GPIO pins.")
+
+
+try:
+    GPIO.cleanup()
+except Exception:
+    pass
+
+check_duplicate_pins()
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
@@ -137,27 +109,25 @@ GPIO.setwarnings(False)
 GPIO.setup(ENA_PIN, GPIO.OUT)
 GPIO.setup(IN1_PIN, GPIO.OUT)
 GPIO.setup(IN2_PIN, GPIO.OUT)
-
 GPIO.setup(ENB_PIN, GPIO.OUT)
 GPIO.setup(IN3_PIN, GPIO.OUT)
 GPIO.setup(IN4_PIN, GPIO.OUT)
 
 GPIO.setup(LEFT_ENC_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(LEFT_ENC_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
 GPIO.setup(RIGHT_ENC_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(RIGHT_ENC_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+GPIO.setup(DETACH_SERVO_PIN, GPIO.OUT)
+
 pwm_left = GPIO.PWM(ENA_PIN, PWM_FREQ)
 pwm_right = GPIO.PWM(ENB_PIN, PWM_FREQ)
+detach_servo_pwm = GPIO.PWM(DETACH_SERVO_PIN, SERVO_FREQ)
 
 pwm_left.start(0)
 pwm_right.start(0)
+detach_servo_pwm.start(0)
 
-
-# =========================
-# 유틸 함수
-# =========================
 
 def clamp(value, min_value, max_value):
     return max(min_value, min(max_value, value))
@@ -167,9 +137,14 @@ def clamp_pwm(value):
     return clamp(value, 0, 100)
 
 
-# =========================
-# 엔코더 콜백
-# =========================
+def clamp_angle(angle, min_angle=0, max_angle=180):
+    return int(clamp(angle, min_angle, max_angle))
+
+
+def angle_to_duty(angle):
+    angle = int(clamp(angle, 0, 180))
+    return 2.5 + (angle / 18.0)
+
 
 def read_encoder_state(pin_a, pin_b):
     a = GPIO.input(pin_a)
@@ -179,18 +154,15 @@ def read_encoder_state(pin_a, pin_b):
 
 def update_quadrature_count(last_state, new_state, current_count):
     transition = (last_state << 2) | new_state
-
     if transition in (0b0001, 0b0111, 0b1110, 0b1000):
         current_count += 1
     elif transition in (0b0010, 0b1011, 0b1101, 0b0100):
         current_count -= 1
-
     return current_count
 
 
 def left_encoder_callback(channel):
     global left_count, left_last_state
-
     with encoder_lock:
         new_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
         left_count = update_quadrature_count(left_last_state, new_state, left_count)
@@ -199,7 +171,6 @@ def left_encoder_callback(channel):
 
 def right_encoder_callback(channel):
     global right_count, right_last_state
-
     with encoder_lock:
         new_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
         right_count = update_quadrature_count(right_last_state, new_state, right_count)
@@ -211,14 +182,34 @@ right_last_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
 
 GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback)
 GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback)
-
 GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback)
 GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback)
 
 
-# =========================
-# 모터 방향 제어
-# =========================
+def set_detach_servo_angle(angle, hold=None):
+    global current_detach_servo_angle
+    if hold is None:
+        hold = DETACH_SERVO_HOLD
+    current_detach_servo_angle = clamp_angle(angle, DETACH_SERVO_MIN_ANGLE, DETACH_SERVO_MAX_ANGLE)
+    duty = angle_to_duty(current_detach_servo_angle)
+    print(f"[{UNIT_NAME}] Detach servo angle={current_detach_servo_angle}, duty={duty:.2f}%")
+    detach_servo_pwm.ChangeDutyCycle(duty)
+    if not hold:
+        time.sleep(0.12)
+        detach_servo_pwm.ChangeDutyCycle(0)
+
+
+def detach_servo_rest():
+    print(f"[{UNIT_NAME}] Detach servo rest")
+    set_detach_servo_angle(DETACH_REST_ANGLE, hold=False)
+
+
+def detach_servo_press():
+    print(f"[{UNIT_NAME}] Detach button press")
+    set_detach_servo_angle(DETACH_PRESS_ANGLE, hold=True)
+    time.sleep(DETACH_PRESS_TIME)
+    set_detach_servo_angle(DETACH_REST_ANGLE, hold=False)
+
 
 def apply_left_direction(direction):
     if direction == "forward":
@@ -252,7 +243,6 @@ def set_drive_target(left_cps, left_dir, right_cps, right_dir):
 
     left_target_cps = abs(float(left_cps))
     right_target_cps = abs(float(right_cps))
-
     left_direction = left_dir
     right_direction = right_dir
 
@@ -262,7 +252,6 @@ def set_drive_target(left_cps, left_dir, right_cps, right_dir):
     if left_target_cps == 0:
         left_integral = 0.0
         left_prev_error = 0.0
-
     if right_target_cps == 0:
         right_integral = 0.0
         right_prev_error = 0.0
@@ -276,10 +265,8 @@ def stop_all():
 
     left_target_cps = 0.0
     right_target_cps = 0.0
-
     left_pwm_value = 0.0
     right_pwm_value = 0.0
-
     left_integral = 0.0
     right_integral = 0.0
     left_prev_error = 0.0
@@ -287,90 +274,43 @@ def stop_all():
 
     apply_left_direction("stop")
     apply_right_direction("stop")
-
     pwm_left.ChangeDutyCycle(0)
     pwm_right.ChangeDutyCycle(0)
 
 
-# =========================
-# 주행 명령
-# =========================
-
 def forward():
-    set_drive_target(
-        FULL_SPEED_CPS_LEFT,
-        "forward",
-        FULL_SPEED_CPS_RIGHT,
-        "forward"
-    )
+    set_drive_target(FULL_SPEED_CPS_LEFT, "forward", FULL_SPEED_CPS_RIGHT, "forward")
 
 
 def backward():
-    set_drive_target(
-        FULL_SPEED_CPS_LEFT,
-        "backward",
-        FULL_SPEED_CPS_RIGHT,
-        "backward"
-    )
+    set_drive_target(FULL_SPEED_CPS_LEFT, "backward", FULL_SPEED_CPS_RIGHT, "backward")
 
 
-def forward_left():
+def slow_forward():
     set_drive_target(
-        FULL_SPEED_CPS_LEFT * TURN_INNER_RATIO,
+        FULL_SPEED_CPS_LEFT * NODE_SLOW_RATIO,
         "forward",
-        FULL_SPEED_CPS_RIGHT * TURN_OUTER_RATIO,
-        "forward"
-    )
-
-
-def forward_right():
-    set_drive_target(
-        FULL_SPEED_CPS_LEFT * TURN_OUTER_RATIO,
+        FULL_SPEED_CPS_RIGHT * NODE_SLOW_RATIO,
         "forward",
-        FULL_SPEED_CPS_RIGHT * TURN_INNER_RATIO,
-        "forward"
     )
 
 
-def backward_left():
+def slow_backward():
     set_drive_target(
-        FULL_SPEED_CPS_LEFT * TURN_OUTER_RATIO,
+        FULL_SPEED_CPS_LEFT * NODE_SLOW_RATIO,
         "backward",
-        FULL_SPEED_CPS_RIGHT * TURN_INNER_RATIO,
-        "backward"
-    )
-
-
-def backward_right():
-    set_drive_target(
-        FULL_SPEED_CPS_LEFT * TURN_INNER_RATIO,
+        FULL_SPEED_CPS_RIGHT * NODE_SLOW_RATIO,
         "backward",
-        FULL_SPEED_CPS_RIGHT * TURN_OUTER_RATIO,
-        "backward"
     )
 
 
 def left():
-    set_drive_target(
-        FULL_SPEED_CPS_LEFT * SPIN_RATIO,
-        "backward",
-        FULL_SPEED_CPS_RIGHT * SPIN_RATIO,
-        "forward"
-    )
+    stop_all()
 
 
 def right():
-    set_drive_target(
-        FULL_SPEED_CPS_LEFT * SPIN_RATIO,
-        "forward",
-        FULL_SPEED_CPS_RIGHT * SPIN_RATIO,
-        "backward"
-    )
+    stop_all()
 
-
-# =========================
-# PID 제어 루프
-# =========================
 
 def compute_pid_pwm(target_cps, measured_cps, max_cps, kp, ki, kd, integral, prev_error, dt):
     if target_cps <= 0:
@@ -379,14 +319,10 @@ def compute_pid_pwm(target_cps, measured_cps, max_cps, kp, ki, kd, integral, pre
     error = target_cps - measured_cps
     integral += error * dt
     integral = clamp(integral, -500.0, 500.0)
-
     derivative = (error - prev_error) / dt if dt > 0 else 0.0
-
     base_pwm = MIN_PWM + (target_cps / max_cps) * (MAX_PWM - MIN_PWM)
     pid_output = (kp * error) + (ki * integral) + (kd * derivative)
-
-    pwm = base_pwm + pid_output
-    pwm = clamp_pwm(pwm)
+    pwm = clamp_pwm(base_pwm + pid_output)
 
     return pwm, integral, error
 
@@ -433,7 +369,7 @@ def control_loop():
             KD_LEFT,
             left_integral,
             left_prev_error,
-            dt
+            dt,
         )
 
         right_pwm_value, right_integral, right_prev_error = compute_pid_pwm(
@@ -445,18 +381,11 @@ def control_loop():
             KD_RIGHT,
             right_integral,
             right_prev_error,
-            dt
+            dt,
         )
 
-        if left_target_cps <= 0:
-            pwm_left.ChangeDutyCycle(0)
-        else:
-            pwm_left.ChangeDutyCycle(left_pwm_value)
-
-        if right_target_cps <= 0:
-            pwm_right.ChangeDutyCycle(0)
-        else:
-            pwm_right.ChangeDutyCycle(right_pwm_value)
+        pwm_left.ChangeDutyCycle(0 if left_target_cps <= 0 else left_pwm_value)
+        pwm_right.ChangeDutyCycle(0 if right_target_cps <= 0 else right_pwm_value)
 
         if now - last_debug_time >= DEBUG_PRINT_INTERVAL:
             last_debug_time = now
@@ -467,10 +396,6 @@ def control_loop():
             )
 
 
-# =========================
-# 명령 처리
-# =========================
-
 def handle_command(command):
     command = command.strip().lower()
 
@@ -479,87 +404,65 @@ def handle_command(command):
 
     print(f"[{UNIT_NAME}] Received command: {command}")
 
-    if command == "forward":
-        forward()
+    command_map = {
+        "forward": forward,
+        "backward": backward,
+        "slow_forward": slow_forward,
+        "slow_backward": slow_backward,
+        "left": left,
+        "right": right,
+        "stop": stop_all,
+        "detach_press": detach_servo_press,
+        "detach_rest": detach_servo_rest,
+    }
 
-    elif command == "backward":
-        backward()
+    action = command_map.get(command)
 
-    elif command == "forward_left":
-        forward_left()
-
-    elif command == "forward_right":
-        forward_right()
-
-    elif command == "backward_left":
-        backward_left()
-
-    elif command == "backward_right":
-        backward_right()
-
-    elif command == "left":
-        left()
-
-    elif command == "right":
-        right()
-
-    elif command == "stop":
-        stop_all()
-
-    else:
+    if action is None:
         print(f"[{UNIT_NAME}] Unknown command: {command}")
+        return
 
+    action()
 
-# =========================
-# 서버 실행
-# =========================
 
 def main():
     global running
 
     print("====================================")
-    print(f" {UNIT_NAME} Motor PID + Encoder Server")
+    print(f" {UNIT_NAME} UDP Motor PID + Encoder + Detach Servo Server")
     print("====================================")
-    print(f"Listening on {HOST}:{PORT}")
-    print("Encoder pins:")
-    print(f"  LEFT  A/B = GPIO{LEFT_ENC_A}, GPIO{LEFT_ENC_B}")
-    print(f"  RIGHT A/B = GPIO{RIGHT_ENC_A}, GPIO{RIGHT_ENC_B}")
-    print("Commands:")
-    print("  forward")
-    print("  backward")
-    print("  forward_left")
-    print("  forward_right")
-    print("  backward_left")
-    print("  backward_right")
-    print("  left")
-    print("  right")
-    print("  stop")
+    print(f"Listening UDP on {HOST}:{PORT}")
+    print(f"LEFT Encoder A/B = GPIO{LEFT_ENC_A}, GPIO{LEFT_ENC_B}")
+    print(f"RIGHT Encoder A/B = GPIO{RIGHT_ENC_A}, GPIO{RIGHT_ENC_B}")
+    print(f"DETACH SERVO = GPIO{DETACH_SERVO_PIN}, physical pin 31")
     print("====================================")
 
     stop_all()
+
+    if START_DETACH_SERVO_REST_ON_BOOT:
+        detach_servo_rest()
 
     pid_thread = threading.Thread(target=control_loop)
     pid_thread.daemon = True
     pid_thread.start()
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         server_socket.bind((HOST, PORT))
-        server_socket.listen(5)
+        print(f"[{UNIT_NAME}] UDP server ready on {HOST}:{PORT}")
 
         while True:
-            client_socket, client_address = server_socket.accept()
+            data, client_address = server_socket.recvfrom(UDP_BUFFER_SIZE)
 
-            with client_socket:
-                data = client_socket.recv(1024)
+            if not data:
+                continue
 
-                if not data:
-                    continue
+            command = data.decode(errors="ignore").strip()
+            print(f"[{UNIT_NAME}] UDP from {client_address}: {command}")
 
-                command = data.decode(errors="ignore").strip()
-                handle_command(command)
+            handle_command(command)
 
     except KeyboardInterrupt:
         print()
@@ -567,8 +470,7 @@ def main():
 
     except OSError as e:
         print(f"[{UNIT_NAME}] Socket error: {e}")
-        print(f"Try:")
-        print(f"pkill -f {UNIT_NAME.capitalize()}_control.py")
+        print(f"Try: sudo pkill -f {UNIT_NAME}_control.py")
 
     finally:
         running = False
@@ -585,8 +487,16 @@ def main():
             pass
 
         try:
+            pwm_left.ChangeDutyCycle(0)
+            pwm_right.ChangeDutyCycle(0)
+            detach_servo_pwm.ChangeDutyCycle(0)
+        except Exception:
+            pass
+
+        try:
             pwm_left.stop()
             pwm_right.stop()
+            detach_servo_pwm.stop()
         except Exception:
             pass
 
