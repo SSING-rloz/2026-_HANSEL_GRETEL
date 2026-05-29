@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 
+# Head Pi CSI camera video sender.
+#
+# Transport: raw H.264 Annex-B byte stream over UDP. This is NOT RTP.
+# The H.264 elementary stream from the encoder is split into fixed-size UDP
+# datagrams (--mtu) with no packetization header. Datagram boundaries do NOT
+# align with frame/NAL boundaries, so the receiver must accumulate bytes and
+# re-split on Annex-B start codes.
+#
+# Video UDP port is 5001 (command/control = 5000, guard/auto-detach = 6000).
+
 import argparse
 import signal
 import socket
@@ -50,7 +60,7 @@ def parse_args():
     )
 
     parser.add_argument("--dst", required=True, help="receiver IP address")
-    parser.add_argument("--port", type=int, default=5000, help="receiver UDP port")
+    parser.add_argument("--port", type=int, default=5001, help="receiver UDP video port")
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=30)
