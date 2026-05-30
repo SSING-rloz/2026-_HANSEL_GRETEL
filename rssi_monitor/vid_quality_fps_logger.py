@@ -21,7 +21,7 @@
 import av, csv, os, sys, time, threading
 from datetime import datetime, timezone, timedelta
 
-INPUT        = sys.argv[1] if len(sys.argv) > 1 else "udp://@0.0.0.0:5000"
+INPUT        = sys.argv[1] if len(sys.argv) > 1 else "udp://@0.0.0.0:5050"
 LOG_INTERVAL = 1.0
 KST = timezone(timedelta(hours=9))
 

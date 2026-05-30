@@ -9,8 +9,8 @@
 import socket, json, os, threading, time
 from datetime import datetime
 
-TELEM_PORT = 6001   # 실시간 RSSI 수신(UDP)
-FILE_PORT  = 6003   # CSV 수신(TCP)
+TELEM_PORT = 5051   # 실시간 RSSI 수신(UDP)
+FILE_PORT  = 5053   # CSV 수신(TCP)
 STALE_SEC  = 5.0    # 이 시간 넘게 소식 없으면 (no resp) 표시
 REFRESH    = 0.5    # 화면 갱신 주기(초)
 

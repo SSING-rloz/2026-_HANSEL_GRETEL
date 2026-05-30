@@ -20,14 +20,16 @@ import socket, subprocess, csv, json, os, re, sys, time, threading
 from datetime import datetime, timezone, timedelta
 
 # ===== 설정 =====
-NODE_ID = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NODE_ID", "1")
-UP_IP   = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("UP_IP", "")     # 노트북 방향 이웃 (필수)
-DOWN_IP = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOWN_IP", "")   # AP 방향 이웃 (헤드/AP는 비움)
+NODE_ID = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NODE_ID", "2")
+#UP_IP   = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("UP_IP", "192.168.4.13")     # 노트북 방향 이웃 (필수)
+#DOWN_IP = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOWN_IP", "192.168.4.11")   # AP 방향 이웃 (헤드/AP는 비움)
+UP_IP   = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("UP_IP", "10.180.86.242")     # 노트북 방향 이웃 (필수)
+DOWN_IP = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOWN_IP", "10.180.86.224")   # AP 방향 이웃 (헤드/AP는 비움)
 IFACE   = os.environ.get("IFACE", "wlan0")
 
-TELEM_PORT = 6001   # UDP, 상류로 흐르는 실시간 RSSI
-CMD_PORT   = 6002   # UDP, 하류로 흐르는 명령
-FILE_PORT  = 6003   # TCP, 상류로 흐르는 CSV
+TELEM_PORT = 5051   # UDP, 상류로 흐르는 실시간 RSSI
+CMD_PORT   = 5052   # UDP, 하류로 흐르는 명령
+FILE_PORT  = 5053   # TCP, 상류로 흐르는 CSV
 SAMPLE_SEC = 0.2    # 측정 주기(초). 0.2 = 5Hz
 KST = timezone(timedelta(hours=9))
 
