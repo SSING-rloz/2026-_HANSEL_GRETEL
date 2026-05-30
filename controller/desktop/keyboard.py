@@ -1,9 +1,9 @@
+import os
 import pygame
 import socket
 import time
 import threading
 import json
-import os
 
 # ============================================================
 # keyboard.py
@@ -13,8 +13,9 @@ import os
 # 기능:
 #   1. 방향키로 로봇 주행 제어
 #   2. U/D로 HEAD 고개 서보 제어
-#   3. RSSI guard 신호 detach_candidate 수신 시 자동 분리
-#   4. 키보드 숫자 1/2/3으로 수동 순차 분리
+#   3. C를 누르고 있는 동안 HEAD 앞쪽 고개 유닛 DC모터 2개 회전
+#   4. RSSI guard 신호 detach_candidate 수신 시 자동 분리
+#   5. 키보드 숫자 1/2/3으로 수동 순차 분리
 #
 # 수동 분리:
 #   1 -> HEAD detach servo 작동
@@ -38,6 +39,11 @@ import os
 #   UDP 5000 -> keyboard.py가 각 Pi로 제어 명령 전송
 #   UDP 6000 -> 통신부가 keyboard.py로 RSSI guard 상태 전송
 #
+# IP 설정:
+#   기본값은 AP 네트워크 기준.
+#   실행할 때 환경변수로 바꿀 수 있음:
+#     HEAD_IP=10.180.86.171 NODE1_IP=... NODE2_IP=... python3 keyboard.py
+#
 # 현재 기구 보정:
 #   실제 전/후진이 반대로 나왔기 때문에
 #     UP   -> backward 명령 전송
@@ -49,19 +55,15 @@ import os
 # ============================================================
 
 
-# AP network (HANSEL_HEAD_AP, 192.168.4.0/24).
-# Head Pi is the AP gateway (192.168.4.1, fixed). Node IPs are DHCP-assigned
-# from 192.168.4.10-50, so set them per launch via env vars:
-#   NODE1_IP=192.168.4.x NODE2_IP=192.168.4.y python3 keyboard.py
+# =========================
+# Unit IP / port settings
+# =========================
+
 HEAD_IP = os.environ.get("HEAD_IP", "192.168.4.1")
 NODE1_IP = os.environ.get("NODE1_IP", "")
 NODE2_IP = os.environ.get("NODE2_IP", "")
 
-if not NODE1_IP or not NODE2_IP:
-    print("[CONFIG] NODE1_IP/NODE2_IP not set; node drive/detach commands will fail until exported.")
-
-# Command/control UDP port (kept at 5000; video is on 5001, guard on 6000).
-PORT = 5000
+PORT = int(os.environ.get("ROBOT_UDP_PORT", "5000"))
 
 HEAD_NAME = "HEAD"
 NODE1_NAME = "NODE1"
@@ -94,6 +96,7 @@ UDP_REPEAT_DELAY = 0.01
 
 DRIVE_SEND_INTERVAL = 0.08
 SERVO_SEND_INTERVAL = 0.08
+FRONT_MOTOR_SEND_INTERVAL = 0.08
 
 
 # =========================
@@ -101,7 +104,7 @@ SERVO_SEND_INTERVAL = 0.08
 # =========================
 
 GUARD_HOST = "0.0.0.0"
-GUARD_PORT = 6000
+GUARD_PORT = int(os.environ.get("GUARD_PORT", "6000"))
 GUARD_BUFFER_SIZE = 1024
 
 
@@ -142,7 +145,15 @@ AUTO_DETACH_ACTION_BY_STATION = {
 # UDP send functions
 # =========================
 
+def is_valid_ip_text(ip):
+    return ip is not None and str(ip).strip() != ""
+
+
 def send_command(ip, port, command):
+    if not is_valid_ip_text(ip):
+        print(f"[UDP SKIP] empty IP <- {command}")
+        return False
+
     message = (command + "\n").encode()
 
     try:
@@ -200,6 +211,13 @@ def send_all_stop():
 
 def send_head_servo(command):
     print(f"[HEAD SERVO SEND] {command}")
+
+    name, ip, port = HEAD_UNIT
+    send_unit_command(name, ip, port, command)
+
+
+def send_head_front_motor(command):
+    print(f"[HEAD FRONT MOTOR SEND] {command}")
 
     name, ip, port = HEAD_UNIT
     send_unit_command(name, ip, port, command)
@@ -530,6 +548,13 @@ def get_head_servo_command_from_keys(keys):
     return None
 
 
+def get_front_motor_command_from_keys(keys):
+    if keys[pygame.K_c]:
+        return "front_motor_forward"
+
+    return "front_motor_stop"
+
+
 # =========================
 # UI drawing
 # =========================
@@ -546,7 +571,8 @@ def draw_screen(
     head_drive_command,
     node_drive_command,
     head_servo_command,
-    last_detach_command
+    front_motor_command,
+    last_detach_command,
 ):
     screen.fill((245, 245, 245))
 
@@ -561,32 +587,34 @@ def draw_screen(
         servo_text = head_servo_command
 
     draw_text(screen, font_text, f"HEAD servo command: {servo_text}", 30, 135)
-    draw_text(screen, font_text, f"Last detach/guard: {last_detach_command}", 30, 165)
+    draw_text(screen, font_text, f"Front motor command: {front_motor_command}", 30, 165)
+    draw_text(screen, font_text, f"Last detach/guard: {last_detach_command}", 30, 195)
 
-    draw_text(screen, font_text, "Detached state:", 30, 205)
-    draw_text(screen, font_text, f"HEAD detached: {detached_units[HEAD_NAME]}", 45, 235)
-    draw_text(screen, font_text, f"NODE1 detached: {detached_units[NODE1_NAME]}", 45, 265)
-    draw_text(screen, font_text, f"NODE2 detached: {detached_units[NODE2_NAME]}", 45, 295)
+    draw_text(screen, font_text, "Detached state:", 30, 235)
+    draw_text(screen, font_text, f"HEAD detached: {detached_units[HEAD_NAME]}", 45, 265)
+    draw_text(screen, font_text, f"NODE1 detached: {detached_units[NODE1_NAME]}", 45, 295)
+    draw_text(screen, font_text, f"NODE2 detached: {detached_units[NODE2_NAME]}", 45, 325)
 
-    draw_text(screen, font_text, "Drive keys:", 30, 345)
-    draw_text(screen, font_text, "UP: actual forward, all active units", 45, 375)
-    draw_text(screen, font_text, "DOWN: actual backward, all active units", 45, 405)
-    draw_text(screen, font_text, "UP + LEFT/RIGHT: HEAD mild turn, NODE slow forward", 45, 435)
-    draw_text(screen, font_text, "DOWN + LEFT/RIGHT: HEAD mild turn, NODE slow backward", 45, 465)
-    draw_text(screen, font_text, "LEFT / RIGHT only: HEAD strong steering, NODE stop", 45, 495)
+    draw_text(screen, font_text, "Drive keys:", 30, 375)
+    draw_text(screen, font_text, "UP: actual forward, all active units", 45, 405)
+    draw_text(screen, font_text, "DOWN: actual backward, all active units", 45, 435)
+    draw_text(screen, font_text, "UP + LEFT/RIGHT: HEAD mild turn, NODE slow forward", 45, 465)
+    draw_text(screen, font_text, "DOWN + LEFT/RIGHT: HEAD mild turn, NODE slow backward", 45, 495)
+    draw_text(screen, font_text, "LEFT / RIGHT only: HEAD strong steering, NODE stop", 45, 525)
 
-    draw_text(screen, font_text, "Head servo keys:", 30, 545)
-    draw_text(screen, font_text, "Hold U: head goes up", 45, 575)
-    draw_text(screen, font_text, "Hold D: head goes down", 45, 605)
+    draw_text(screen, font_text, "Head unit keys:", 30, 575)
+    draw_text(screen, font_text, "Hold U: head goes up", 45, 605)
+    draw_text(screen, font_text, "Hold D: head goes down", 45, 635)
+    draw_text(screen, font_text, "Hold C: front head-unit DC motors rotate", 45, 665)
 
-    draw_text(screen, font_text, "Manual sequential detach:", 30, 655)
-    draw_text(screen, font_text, "1: HEAD detach -> NODE1 disabled", 45, 685)
-    draw_text(screen, font_text, "2: NODE1 detach -> NODE2 disabled", 45, 715)
-    draw_text(screen, font_text, "3: NODE2 detach -> NODE2 disabled", 45, 745)
-    draw_text(screen, font_text, "R: reset detached state", 45, 775)
+    draw_text(screen, font_text, "Manual sequential detach:", 30, 715)
+    draw_text(screen, font_text, "1: HEAD detach -> NODE1 disabled", 45, 745)
+    draw_text(screen, font_text, "2: NODE1 detach -> NODE2 disabled", 45, 775)
+    draw_text(screen, font_text, "3: NODE2 detach -> NODE2 disabled", 45, 805)
+    draw_text(screen, font_text, "R: reset detached state", 45, 835)
 
-    draw_text(screen, font_text, f"Guard UDP listener: {GUARD_HOST}:{GUARD_PORT}", 30, 825)
-    draw_text(screen, font_text, "ESC: quit", 30, 850)
+    draw_text(screen, font_text, f"Guard UDP listener: {GUARD_HOST}:{GUARD_PORT}", 30, 865)
+    draw_text(screen, font_text, "ESC: quit", 30, 890)
 
     pygame.display.flip()
 
@@ -602,7 +630,7 @@ def main():
 
     pygame.init()
 
-    screen = pygame.display.set_mode((1020, 900))
+    screen = pygame.display.set_mode((1080, 930))
     pygame.display.set_caption("Multi Raspberry Pi Robot UDP Keyboard Control")
 
     font_title = pygame.font.SysFont(None, 36)
@@ -621,11 +649,21 @@ def main():
     last_head_servo_send_time = 0.0
     current_head_servo_command = None
 
+    last_front_motor_command = None
+    last_front_motor_send_time = 0.0
+    current_front_motor_command = "front_motor_stop"
+
     last_detach_command = "none"
 
     print("====================================")
     print(" Multi Unit Robot UDP Keyboard Control")
     print("====================================")
+    print("IP:")
+    print(f"  HEAD_IP  = {HEAD_IP}")
+    print(f"  NODE1_IP = {NODE1_IP}")
+    print(f"  NODE2_IP = {NODE2_IP}")
+    print(f"  PORT     = {PORT}")
+    print("------------------------------------")
     print("Drive:")
     print("  UP              : actual forward")
     print("  DOWN            : actual backward")
@@ -635,6 +673,11 @@ def main():
     print("  DOWN + RIGHT    : HEAD mild backward steering, NODE slow backward")
     print("  LEFT only       : HEAD strong steering, NODE stop")
     print("  RIGHT only      : HEAD strong steering, NODE stop")
+    print("------------------------------------")
+    print("Head unit:")
+    print("  Hold U : head goes up")
+    print("  Hold D : head goes down")
+    print("  Hold C : front head-unit DC motors rotate")
     print("------------------------------------")
     print("Manual sequential detach:")
     print("  1 : HEAD detach, then NODE1 disabled")
@@ -652,12 +695,15 @@ def main():
     print("====================================")
 
     send_all_stop()
+    send_head_front_motor("front_motor_stop")
 
     last_head_drive_command = "stop"
     last_node_drive_command = "stop"
+    last_front_motor_command = "front_motor_stop"
 
     last_head_drive_send_time = time.time()
     last_node_drive_send_time = time.time()
+    last_front_motor_send_time = time.time()
 
     try:
         while running:
@@ -669,11 +715,13 @@ def main():
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
+                    send_head_front_motor("front_motor_stop")
                     send_all_stop()
                     running = False
 
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
+                        send_head_front_motor("front_motor_stop")
                         send_all_stop()
                         running = False
 
@@ -722,6 +770,20 @@ def main():
                     send_head_servo(current_head_servo_command)
                     last_head_servo_send_time = now
 
+            current_front_motor_command = get_front_motor_command_from_keys(keys)
+
+            if current_front_motor_command != last_front_motor_command:
+                send_head_front_motor(current_front_motor_command)
+                last_front_motor_command = current_front_motor_command
+                last_front_motor_send_time = now
+
+            elif (
+                current_front_motor_command != "front_motor_stop"
+                and now - last_front_motor_send_time >= FRONT_MOTOR_SEND_INTERVAL
+            ):
+                send_head_front_motor(current_front_motor_command)
+                last_front_motor_send_time = now
+
             draw_screen(
                 screen,
                 font_title,
@@ -729,12 +791,14 @@ def main():
                 head_drive_command,
                 node_drive_command,
                 current_head_servo_command,
-                last_detach_command
+                current_front_motor_command,
+                last_detach_command,
             )
 
             clock.tick(60)
 
     finally:
+        send_head_front_motor("front_motor_stop")
         send_all_stop()
         pygame.quit()
         print("Keyboard control stopped.")
