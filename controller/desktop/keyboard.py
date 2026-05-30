@@ -59,29 +59,34 @@ import json
 # Unit IP / port settings
 # =========================
 
-HEAD_IP = os.environ.get("HEAD_IP", "192.168.4.1")
-NODE1_IP = os.environ.get("NODE1_IP", "")
-NODE2_IP = os.environ.get("NODE2_IP", "")
+HEAD_IP = os.environ.get("HEAD_IP", "10.180.86.171")
+NODE1_IP = os.environ.get("NODE1_IP", "10.180.86.224")
+NODE2_IP = os.environ.get("NODE2_IP", "10.180.86.161")
+NODE3_IP = os.environ.get("NODE3_IP", "10.180.86.242")
 
 PORT = int(os.environ.get("ROBOT_UDP_PORT", "5000"))
 
 HEAD_NAME = "HEAD"
 NODE1_NAME = "NODE1"
 NODE2_NAME = "NODE2"
+NODE3_NAME = "NODE3"
 
 HEAD_UNIT = (HEAD_NAME, HEAD_IP, PORT)
 NODE1_UNIT = (NODE1_NAME, NODE1_IP, PORT)
 NODE2_UNIT = (NODE2_NAME, NODE2_IP, PORT)
+NODE3_UNIT = (NODE3_NAME, NODE3_IP, PORT)
 
 NODE_UNITS = [
     NODE1_UNIT,
     NODE2_UNIT,
+    NODE3_UNIT,
 ]
 
 ALL_UNITS = [
     HEAD_UNIT,
     NODE1_UNIT,
     NODE2_UNIT,
+    NODE3_UNIT,
 ]
 
 
@@ -116,6 +121,7 @@ detached_units = {
     HEAD_NAME: False,
     NODE1_NAME: False,
     NODE2_NAME: False,
+    NODE3_NAME: False,
 }
 
 guard_event_lock = threading.Lock()
@@ -138,6 +144,10 @@ AUTO_DETACH_ACTION_BY_STATION = {
     "NODE2": "node1",
     "NODE2_PI": "node1",
     "NODE2-PI": "node1",
+
+    "NODE3": "node2",
+    "NODE3_PI": "node2",
+    "NODE3-PI": "node2",
 }
 
 
@@ -275,7 +285,7 @@ def manual_detach_step_3():
     """
     키보드 3번:
       NODE2의 detach servo 작동
-      이후 NODE2는 주행 명령 대상에서 제외
+      이후 NODE3는 주행 명령 대상에서 제외
     """
     print("====================================")
     print("[MANUAL DETACH 3] NODE2 detach_press")
@@ -284,10 +294,10 @@ def manual_detach_step_3():
     name, ip, port = NODE2_UNIT
     send_unit_command(name, ip, port, "detach_press")
 
-    detached_units[NODE2_NAME] = True
-    force_stop_unit(NODE2_UNIT)
+    detached_units[NODE3_NAME] = True
+    force_stop_unit(NODE3_UNIT)
 
-    print("[STATE] NODE2 detached. NODE2 will no longer receive drive commands.")
+    print("[STATE] NODE3 detached. NODE3 will no longer receive drive commands.")
 
 
 # 기존 자동 분리 함수 이름 유지용 alias
@@ -307,6 +317,7 @@ def reset_detach_state():
     detached_units[HEAD_NAME] = False
     detached_units[NODE1_NAME] = False
     detached_units[NODE2_NAME] = False
+    detached_units[NODE3_NAME] = False
 
     auto_detached_stations.clear()
 
@@ -591,9 +602,9 @@ def draw_screen(
     draw_text(screen, font_text, f"Last detach/guard: {last_detach_command}", 30, 195)
 
     draw_text(screen, font_text, "Detached state:", 30, 235)
-    draw_text(screen, font_text, f"HEAD detached: {detached_units[HEAD_NAME]}", 45, 265)
-    draw_text(screen, font_text, f"NODE1 detached: {detached_units[NODE1_NAME]}", 45, 295)
-    draw_text(screen, font_text, f"NODE2 detached: {detached_units[NODE2_NAME]}", 45, 325)
+    draw_text(screen, font_text, f"HEAD detached: {detached_units[NODE1_NAME]}", 45, 265)
+    draw_text(screen, font_text, f"NODE1 detached: {detached_units[NODE2_NAME]}", 45, 295)
+    draw_text(screen, font_text, f"NODE2 detached: {detached_units[NODE3_NAME]}", 45, 325)
 
     draw_text(screen, font_text, "Drive keys:", 30, 375)
     draw_text(screen, font_text, "UP: actual forward, all active units", 45, 405)
@@ -610,7 +621,7 @@ def draw_screen(
     draw_text(screen, font_text, "Manual sequential detach:", 30, 715)
     draw_text(screen, font_text, "1: HEAD detach -> NODE1 disabled", 45, 745)
     draw_text(screen, font_text, "2: NODE1 detach -> NODE2 disabled", 45, 775)
-    draw_text(screen, font_text, "3: NODE2 detach -> NODE2 disabled", 45, 805)
+    draw_text(screen, font_text, "3: NODE2 detach -> NODE3 disabled", 45, 805)
     draw_text(screen, font_text, "R: reset detached state", 45, 835)
 
     draw_text(screen, font_text, f"Guard UDP listener: {GUARD_HOST}:{GUARD_PORT}", 30, 865)
@@ -735,7 +746,7 @@ def main():
 
                     elif event.key == pygame.K_3:
                         manual_detach_step_3()
-                        last_detach_command = "MANUAL 3: NODE2 detach -> NODE2 disabled"
+                        last_detach_command = "MANUAL 3: NODE2 detach -> NODE3 disabled"
 
                     elif event.key == pygame.K_r:
                         reset_detach_state()
