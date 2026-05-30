@@ -3,76 +3,172 @@ import time
 import threading
 import RPi.GPIO as GPIO
 
+# ============================================================
+# Node3_control.py
+# L298N + Encoder PID speed control + Detach servo
+# UDP command server version
+#
+# Drive commands:
+#   forward
+#   backward
+#   slow_forward
+#   slow_backward
+#   left
+#   right
+#   stop
+#
+# Detach servo commands:
+#   detach_press
+#   detach_rest
+#
+# GPIO BCM pin map:
+#   L298N:
+#     ENA -> GPIO18
+#     IN1 -> GPIO23
+#     IN2 -> GPIO24
+#     ENB -> GPIO13
+#     IN3 -> GPIO27
+#     IN4 -> GPIO22
+#
+#   Encoders:
+#     Left A  -> GPIO20, physical pin 38
+#     Left B  -> GPIO21, physical pin 40
+#     Right A -> GPIO16, physical pin 36
+#     Right B -> GPIO26, physical pin 37
+#
+#   Detach micro servo:
+#     Signal -> GPIO6, physical pin 31
+#
+# Notes:
+#   Run with sudo if GPIO permission errors occur.
+#   All grounds must be common.
+#   If encoder output is 5V, use a level shifter before Pi GPIO.
+# ============================================================
+
+
 UNIT_NAME = "NODE3"
+
+
+# =========================
+# L298N motor GPIO pins
+# =========================
 
 ENA_PIN = 18
 IN1_PIN = 23
 IN2_PIN = 24
+
 ENB_PIN = 13
 IN3_PIN = 27
 IN4_PIN = 22
 
+
+# =========================
+# Encoder GPIO pins
+# =========================
+
 LEFT_ENC_A = 20
 LEFT_ENC_B = 21
+
 RIGHT_ENC_A = 16
 RIGHT_ENC_B = 26
 
+
+# =========================
+# Detach servo GPIO pin
+# =========================
+
 DETACH_SERVO_PIN = 6
+
+
+# =========================
+# UDP server settings
+# =========================
 
 HOST = "0.0.0.0"
 PORT = 5000
 UDP_BUFFER_SIZE = 1024
 
+
+# =========================
+# PWM / PID settings
+# =========================
+
 PWM_FREQ = 1000
 CONTROL_INTERVAL = 0.05
+
 MIN_PWM = 25
 MAX_PWM = 100
 
 FULL_SPEED_CPS_LEFT = 800.0
 FULL_SPEED_CPS_RIGHT = 800.0
 
+# Used when HEAD is steering and NODE should move slowly in a straight line.
 NODE_SLOW_RATIO = 0.35
 
 KP_LEFT = 0.035
 KI_LEFT = 0.015
 KD_LEFT = 0.000
+
 KP_RIGHT = 0.035
 KI_RIGHT = 0.015
 KD_RIGHT = 0.000
 
+
+# =========================
+# Detach servo settings
+# =========================
+
 SERVO_FREQ = 50
 
 current_detach_servo_angle = 20
+
 DETACH_SERVO_MIN_ANGLE = 0
 DETACH_SERVO_MAX_ANGLE = 180
+
 DETACH_REST_ANGLE = 20
 DETACH_PRESS_ANGLE = 75
 DETACH_PRESS_TIME = 0.35
+
 START_DETACH_SERVO_REST_ON_BOOT = True
 DETACH_SERVO_HOLD = False
+
+
+# =========================
+# Global state
+# =========================
 
 running = True
 
 left_count = 0
 right_count = 0
+
 left_last_state = 0
 right_last_state = 0
+
 encoder_lock = threading.Lock()
 
 left_target_cps = 0.0
 right_target_cps = 0.0
+
 left_direction = "stop"
 right_direction = "stop"
+
 left_pwm_value = 0.0
 right_pwm_value = 0.0
+
 left_integral = 0.0
 right_integral = 0.0
+
 left_prev_error = 0.0
 right_prev_error = 0.0
 
 last_debug_time = 0.0
 DEBUG_PRINT_INTERVAL = 0.5
 
+
+# =========================
+# Pin conflict check
+# =========================
 
 def check_duplicate_pins():
     pin_map = {
@@ -88,13 +184,22 @@ def check_duplicate_pins():
         "RIGHT_ENC_B": RIGHT_ENC_B,
         "DETACH_SERVO_PIN": DETACH_SERVO_PIN,
     }
+
     used = {}
+
     for name, pin in pin_map.items():
         if pin in used:
-            raise RuntimeError(f"GPIO pin conflict: {name} and {used[pin]} both use GPIO{pin}")
+            raise RuntimeError(
+                f"GPIO pin conflict: {name} and {used[pin]} both use GPIO{pin}"
+            )
         used[pin] = name
+
     print(f"[{UNIT_NAME}] PIN CHECK OK. No duplicated GPIO pins.")
 
+
+# =========================
+# GPIO setup
+# =========================
 
 try:
     GPIO.cleanup()
@@ -109,12 +214,14 @@ GPIO.setwarnings(False)
 GPIO.setup(ENA_PIN, GPIO.OUT)
 GPIO.setup(IN1_PIN, GPIO.OUT)
 GPIO.setup(IN2_PIN, GPIO.OUT)
+
 GPIO.setup(ENB_PIN, GPIO.OUT)
 GPIO.setup(IN3_PIN, GPIO.OUT)
 GPIO.setup(IN4_PIN, GPIO.OUT)
 
 GPIO.setup(LEFT_ENC_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(LEFT_ENC_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
 GPIO.setup(RIGHT_ENC_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(RIGHT_ENC_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
@@ -128,6 +235,10 @@ pwm_left.start(0)
 pwm_right.start(0)
 detach_servo_pwm.start(0)
 
+
+# =========================
+# Utility functions
+# =========================
 
 def clamp(value, min_value, max_value):
     return max(min_value, min(max_value, value))
@@ -146,6 +257,10 @@ def angle_to_duty(angle):
     return 2.5 + (angle / 18.0)
 
 
+# =========================
+# Encoder callbacks
+# =========================
+
 def read_encoder_state(pin_a, pin_b):
     a = GPIO.input(pin_a)
     b = GPIO.input(pin_b)
@@ -154,15 +269,18 @@ def read_encoder_state(pin_a, pin_b):
 
 def update_quadrature_count(last_state, new_state, current_count):
     transition = (last_state << 2) | new_state
+
     if transition in (0b0001, 0b0111, 0b1110, 0b1000):
         current_count += 1
     elif transition in (0b0010, 0b1011, 0b1101, 0b0100):
         current_count -= 1
+
     return current_count
 
 
 def left_encoder_callback(channel):
     global left_count, left_last_state
+
     with encoder_lock:
         new_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
         left_count = update_quadrature_count(left_last_state, new_state, left_count)
@@ -171,6 +289,7 @@ def left_encoder_callback(channel):
 
 def right_encoder_callback(channel):
     global right_count, right_last_state
+
     with encoder_lock:
         new_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
         right_count = update_quadrature_count(right_last_state, new_state, right_count)
@@ -182,18 +301,36 @@ right_last_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
 
 GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback)
 GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback)
+
 GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback)
 GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback)
 
 
+# =========================
+# Detach servo control
+# =========================
+
 def set_detach_servo_angle(angle, hold=None):
     global current_detach_servo_angle
+
     if hold is None:
         hold = DETACH_SERVO_HOLD
-    current_detach_servo_angle = clamp_angle(angle, DETACH_SERVO_MIN_ANGLE, DETACH_SERVO_MAX_ANGLE)
+
+    current_detach_servo_angle = clamp_angle(
+        angle,
+        DETACH_SERVO_MIN_ANGLE,
+        DETACH_SERVO_MAX_ANGLE
+    )
+
     duty = angle_to_duty(current_detach_servo_angle)
-    print(f"[{UNIT_NAME}] Detach servo angle={current_detach_servo_angle}, duty={duty:.2f}%")
+
+    print(
+        f"[{UNIT_NAME}] Detach servo angle = "
+        f"{current_detach_servo_angle} deg, duty = {duty:.2f}%"
+    )
+
     detach_servo_pwm.ChangeDutyCycle(duty)
+
     if not hold:
         time.sleep(0.12)
         detach_servo_pwm.ChangeDutyCycle(0)
@@ -206,10 +343,15 @@ def detach_servo_rest():
 
 def detach_servo_press():
     print(f"[{UNIT_NAME}] Detach button press")
+
     set_detach_servo_angle(DETACH_PRESS_ANGLE, hold=True)
     time.sleep(DETACH_PRESS_TIME)
     set_detach_servo_angle(DETACH_REST_ANGLE, hold=False)
 
+
+# =========================
+# Motor direction control
+# =========================
 
 def apply_left_direction(direction):
     if direction == "forward":
@@ -243,6 +385,7 @@ def set_drive_target(left_cps, left_dir, right_cps, right_dir):
 
     left_target_cps = abs(float(left_cps))
     right_target_cps = abs(float(right_cps))
+
     left_direction = left_dir
     right_direction = right_dir
 
@@ -252,6 +395,7 @@ def set_drive_target(left_cps, left_dir, right_cps, right_dir):
     if left_target_cps == 0:
         left_integral = 0.0
         left_prev_error = 0.0
+
     if right_target_cps == 0:
         right_integral = 0.0
         right_prev_error = 0.0
@@ -265,8 +409,10 @@ def stop_all():
 
     left_target_cps = 0.0
     right_target_cps = 0.0
+
     left_pwm_value = 0.0
     right_pwm_value = 0.0
+
     left_integral = 0.0
     right_integral = 0.0
     left_prev_error = 0.0
@@ -274,16 +420,31 @@ def stop_all():
 
     apply_left_direction("stop")
     apply_right_direction("stop")
+
     pwm_left.ChangeDutyCycle(0)
     pwm_right.ChangeDutyCycle(0)
 
 
+# =========================
+# Drive commands
+# =========================
+
 def forward():
-    set_drive_target(FULL_SPEED_CPS_LEFT, "forward", FULL_SPEED_CPS_RIGHT, "forward")
+    set_drive_target(
+        FULL_SPEED_CPS_LEFT,
+        "forward",
+        FULL_SPEED_CPS_RIGHT,
+        "forward"
+    )
 
 
 def backward():
-    set_drive_target(FULL_SPEED_CPS_LEFT, "backward", FULL_SPEED_CPS_RIGHT, "backward")
+    set_drive_target(
+        FULL_SPEED_CPS_LEFT,
+        "backward",
+        FULL_SPEED_CPS_RIGHT,
+        "backward"
+    )
 
 
 def slow_forward():
@@ -291,7 +452,7 @@ def slow_forward():
         FULL_SPEED_CPS_LEFT * NODE_SLOW_RATIO,
         "forward",
         FULL_SPEED_CPS_RIGHT * NODE_SLOW_RATIO,
-        "forward",
+        "forward"
     )
 
 
@@ -300,7 +461,7 @@ def slow_backward():
         FULL_SPEED_CPS_LEFT * NODE_SLOW_RATIO,
         "backward",
         FULL_SPEED_CPS_RIGHT * NODE_SLOW_RATIO,
-        "backward",
+        "backward"
     )
 
 
@@ -312,6 +473,10 @@ def right():
     stop_all()
 
 
+# =========================
+# PID control loop
+# =========================
+
 def compute_pid_pwm(target_cps, measured_cps, max_cps, kp, ki, kd, integral, prev_error, dt):
     if target_cps <= 0:
         return 0.0, 0.0, 0.0
@@ -319,10 +484,14 @@ def compute_pid_pwm(target_cps, measured_cps, max_cps, kp, ki, kd, integral, pre
     error = target_cps - measured_cps
     integral += error * dt
     integral = clamp(integral, -500.0, 500.0)
+
     derivative = (error - prev_error) / dt if dt > 0 else 0.0
+
     base_pwm = MIN_PWM + (target_cps / max_cps) * (MAX_PWM - MIN_PWM)
     pid_output = (kp * error) + (ki * integral) + (kd * derivative)
-    pwm = clamp_pwm(base_pwm + pid_output)
+
+    pwm = base_pwm + pid_output
+    pwm = clamp_pwm(pwm)
 
     return pwm, integral, error
 
@@ -369,7 +538,7 @@ def control_loop():
             KD_LEFT,
             left_integral,
             left_prev_error,
-            dt,
+            dt
         )
 
         right_pwm_value, right_integral, right_prev_error = compute_pid_pwm(
@@ -381,11 +550,18 @@ def control_loop():
             KD_RIGHT,
             right_integral,
             right_prev_error,
-            dt,
+            dt
         )
 
-        pwm_left.ChangeDutyCycle(0 if left_target_cps <= 0 else left_pwm_value)
-        pwm_right.ChangeDutyCycle(0 if right_target_cps <= 0 else right_pwm_value)
+        if left_target_cps <= 0:
+            pwm_left.ChangeDutyCycle(0)
+        else:
+            pwm_left.ChangeDutyCycle(left_pwm_value)
+
+        if right_target_cps <= 0:
+            pwm_right.ChangeDutyCycle(0)
+        else:
+            pwm_right.ChangeDutyCycle(right_pwm_value)
 
         if now - last_debug_time >= DEBUG_PRINT_INTERVAL:
             last_debug_time = now
@@ -396,6 +572,10 @@ def control_loop():
             )
 
 
+# =========================
+# Command handling
+# =========================
+
 def handle_command(command):
     command = command.strip().lower()
 
@@ -404,26 +584,31 @@ def handle_command(command):
 
     print(f"[{UNIT_NAME}] Received command: {command}")
 
-    command_map = {
-        "forward": forward,
-        "backward": backward,
-        "slow_forward": slow_forward,
-        "slow_backward": slow_backward,
-        "left": left,
-        "right": right,
-        "stop": stop_all,
-        "detach_press": detach_servo_press,
-        "detach_rest": detach_servo_rest,
-    }
-
-    action = command_map.get(command)
-
-    if action is None:
+    if command == "forward":
+        forward()
+    elif command == "backward":
+        backward()
+    elif command == "slow_forward":
+        slow_forward()
+    elif command == "slow_backward":
+        slow_backward()
+    elif command == "left":
+        left()
+    elif command == "right":
+        right()
+    elif command == "stop":
+        stop_all()
+    elif command == "detach_press":
+        detach_servo_press()
+    elif command == "detach_rest":
+        detach_servo_rest()
+    else:
         print(f"[{UNIT_NAME}] Unknown command: {command}")
-        return
 
-    action()
 
+# =========================
+# UDP server
+# =========================
 
 def main():
     global running
@@ -470,7 +655,8 @@ def main():
 
     except OSError as e:
         print(f"[{UNIT_NAME}] Socket error: {e}")
-        print(f"Try: sudo pkill -f {UNIT_NAME}_control.py")
+        print("Try:")
+        print("sudo pkill -f Node3_control.py")
 
     finally:
         running = False
