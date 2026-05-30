@@ -29,7 +29,6 @@ AP_SUBNET="192.168.4.0/24"
 
 SSH_PORT="22"
 CONTROL_PORT="5000"
-VIDEO_PORT="6000"
 
 APPLY="false"
 PRINT_ONLY="false"
@@ -52,18 +51,27 @@ Options:
   --iface <name>         AP interface. Default: wlan0
   --ap-subnet <cidr>     AP subnet. Default: 192.168.4.0/24
   --ssh-port <port>      SSH TCP port. Default: 22
-  --control-port <port>  Control TCP placeholder port. Default: 5000
-  --video-port <port>    Video UDP placeholder port. Default: 6000
+  --control-port <port>  Control UDP port. Default: 5000
   -h, --help             Show this help
 
-Allowed AP-local services:
+Allowed AP-local services (Head Pi INPUT, i.e. traffic the Head Pi receives):
   - TCP 22    SSH
-  - UDP 67/68 DHCP
-  - UDP/TCP 53 DNS
-  - TCP 5000  control command placeholder
-  - UDP 6000  video stream placeholder
+  - UDP 67/68 DHCP (Head Pi runs dnsmasq for AP clients)
+  - UDP/TCP 53 DNS (Head Pi runs dnsmasq for AP clients)
+  - UDP 5000  control command (Head_control.py listens on 0.0.0.0:5000)
+
+Intentionally NOT opened here (Head Pi does not receive these):
+  - UDP 5001  video stream: the Head Pi is the camera SENDER, not a receiver.
+              Received by the Node relay / Android, not by the Head Pi.
+  - UDP 6000  guard / auto-detach: received where keyboard.py runs
+              (Controller PC), not by the Head Pi. Add a Head INPUT rule
+              only if the receiver is ever confirmed to run on the Head Pi.
+  - UDP 5005  rssi_listen: Node1's receive port, not a Head Pi service.
 
 Notes:
+  - This is the Head Pi INPUT firewall. It only allows services the Head Pi
+    actually receives. It is NOT a place to express the whole system port map;
+    the full port table belongs in project documentation.
   - NAT/forwarding is intentionally not configured here.
   - routing/NAT should be handled later by net/forwarding.sh.
   - This script does not flush the global nftables ruleset.
@@ -128,15 +136,6 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
 
-        --video-port)
-            VIDEO_PORT="${2:-}"
-            if ! is_port "$VIDEO_PORT"; then
-                log "ERROR: --video-port must be 1..65535"
-                exit 1
-            fi
-            shift 2
-            ;;
-
         -h|--help)
             usage
             exit 0
@@ -169,11 +168,19 @@ table inet hansel_fw {
         # SSH from AP clients to Head Pi.
         iifname "$AP_IFACE" ip saddr $AP_SUBNET tcp dport $SSH_PORT accept
 
-        # Control command server placeholder.
-        iifname "$AP_IFACE" ip saddr $AP_SUBNET tcp dport $CONTROL_PORT accept
+        # Control command server (UDP 5000): keyboard.py -> Head_control.py.
+        # Head_control.py binds 0.0.0.0:5000 (SOCK_DGRAM), so the Head Pi
+        # genuinely receives this. (Previously a stale tcp dport rule.)
+        iifname "$AP_IFACE" ip saddr $AP_SUBNET udp dport $CONTROL_PORT accept
 
-        # Video UDP stream placeholder.
-        iifname "$AP_IFACE" ip saddr $AP_SUBNET udp dport $VIDEO_PORT accept
+        # Intentionally NOT opened here (Head Pi does not receive these):
+        #   UDP 5001 video : Head Pi is the camera SENDER; received by the
+        #                    Node relay / Android, not by the Head Pi.
+        #   UDP 6000 guard : auto-detach receiver lives where keyboard.py runs
+        #                    (Controller PC), not on the Head Pi.
+        #   UDP 5005 rssi_listen : Node1's receive port, not a Head service.
+        # Add Head INPUT rules for these only if a receiver is ever confirmed
+        # to run on the Head Pi itself.
 
         # Prototype/testing mode:
         # policy accept is intentionally kept to avoid SSH/AP lockout.
