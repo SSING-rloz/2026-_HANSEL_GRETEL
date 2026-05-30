@@ -32,43 +32,15 @@ import json
 #
 #   R -> 분리 상태 초기화, 테스트용
 #
-# 자동 분리:
-#   통신부에서 UDP 6000번 포트로 아래 메시지 수신 시 자동 분리
-#
-#   HEAD,detach_candidate
-#     -> HEAD detach servo 작동
-#     -> NODE1 disabled
-#
-#   NODE1,detach_candidate
-#     -> NODE1 detach servo 작동
-#     -> NODE2 disabled
-#
-#   NODE2,detach_candidate
-#     -> NODE2 detach servo 작동
-#     -> NODE3 disabled
-#
-#   NODE3,detach_candidate
-#     -> NODE3 detach servo 작동
-#     -> NODE3 disabled
-#
-# 지원 메시지 예:
-#   NODE1,detach_candidate
-#   NODE1 detach_candidate
-#   NODE1 detach
-#   detach NODE1
-#   detach_node1
-#   node1_detach
-#   {"station":"NODE1","guard_status":"detach_candidate"}
-#   {"target":"NODE1","status":"detach_candidate"}
-#   {"detach_unit":"NODE1"}
-#
 # 포트:
 #   UDP 5000 -> keyboard.py가 각 Pi로 제어 명령 전송
-#   UDP 6000 -> 통신부가 keyboard.py로 RSSI guard 상태 전송
+#   UDP 6000 -> 테스트/디버깅용 guard listener
 #
-# IP 설정:
-#   실행할 때 환경변수로 바꿀 수 있음:
-#     HEAD_IP=10.180.86.171 NODE1_IP=... NODE2_IP=... NODE3_IP=... python3 keyboard.py
+# AP IP 설정:
+#   HEAD  = 192.168.4.1
+#   NODE1 = 192.168.4.11
+#   NODE2 = 192.168.4.12
+#   NODE3 = 192.168.4.13
 #
 # 현재 기구 보정:
 #   실제 전/후진이 반대로 나왔기 때문에
@@ -85,10 +57,10 @@ import json
 # Unit IP / port settings
 # =========================
 
-HEAD_IP = os.environ.get("HEAD_IP", "10.180.86.171")
-NODE1_IP = os.environ.get("NODE1_IP", "10.180.86.224")
-NODE2_IP = os.environ.get("NODE2_IP", "10.180.86.161")
-NODE3_IP = os.environ.get("NODE3_IP", "10.180.86.242")
+HEAD_IP = os.environ.get("HEAD_IP", "192.168.4.1")
+NODE1_IP = os.environ.get("NODE1_IP", "192.168.4.11")
+NODE2_IP = os.environ.get("NODE2_IP", "192.168.4.12")
+NODE3_IP = os.environ.get("NODE3_IP", "192.168.4.13")
 
 PORT = int(os.environ.get("ROBOT_UDP_PORT", "5000"))
 
@@ -268,7 +240,7 @@ def force_stop_unit(unit):
 
 def manual_detach_step_1():
     """
-    키보드 1번 또는 HEAD 자동분리:
+    키보드 1번:
       HEAD의 detach servo 작동
       이후 NODE1은 주행 명령 대상에서 제외
     """
@@ -289,7 +261,7 @@ def manual_detach_step_1():
 
 def manual_detach_step_2():
     """
-    키보드 2번 또는 NODE1 자동분리:
+    키보드 2번:
       NODE1의 detach servo 작동
       이후 NODE2는 주행 명령 대상에서 제외
     """
@@ -310,7 +282,7 @@ def manual_detach_step_2():
 
 def manual_detach_step_3():
     """
-    키보드 3번 또는 NODE2 자동분리:
+    키보드 3번:
       NODE2의 detach servo 작동
       이후 NODE3는 주행 명령 대상에서 제외
     """
@@ -331,7 +303,7 @@ def manual_detach_step_3():
 
 def manual_detach_step_4():
     """
-    키보드 4번 또는 NODE3 자동분리:
+    키보드 4번:
       NODE3의 detach servo 작동
       이후 NODE3는 주행 명령 대상에서 제외
 
@@ -534,25 +506,10 @@ def parse_guard_text_message(raw_message):
 
 def parse_guard_message(raw_message):
     """
-    통신부 guard 메시지 파싱.
+    테스트/디버깅용 guard 메시지 파싱.
 
-    지원 형식:
-      NODE1,detach_candidate
-      NODE1 detach_candidate
-      NODE1 detach
-      detach NODE1
-      node1_detach
-      detach_node1
-      {"station":"NODE1","guard_status":"detach_candidate"}
-      {"target":"NODE1","status":"detach_candidate"}
-      {"detach_unit":"NODE1"}
-
-    반환:
-      station, guard_status
-
-    station의 의미:
-      통신부가 detach 명령을 내린 유닛 이름.
-      NODE1이면 NODE1의 detach servo를 작동시킨다.
+    실제 자동분리 운용은 head_detach_router.py 쪽에서 처리하고,
+    이 keyboard.py의 guard listener는 수동 검증용으로만 사용한다.
     """
     raw_message = raw_message.strip()
 
@@ -567,15 +524,13 @@ def parse_guard_message(raw_message):
 
 def handle_auto_detach_candidate(station):
     """
-    통신부 자동분리 정책:
+    keyboard.py 내부 테스트용 자동분리 정책.
 
-      HEAD  detach_candidate -> HEAD  detach -> NODE1 disabled
-      NODE1 detach_candidate -> NODE1 detach -> NODE2 disabled
-      NODE2 detach_candidate -> NODE2 detach -> NODE3 disabled
-      NODE3 detach_candidate -> NODE3 detach -> NODE3 disabled
+    실제 자동분리는:
+      통신부 -> HEAD의 head_detach_router.py -> actor 유닛 control server
+    흐름으로 처리한다.
 
-    여기서 station은 '신호가 약해진 대상'이 아니라
-    통신부가 명령한 'detach를 수행할 유닛'으로 해석한다.
+    여기서는 키보드/노트북에서 테스트할 때만 사용한다.
     """
     station = normalize_station_name(station)
 
@@ -588,7 +543,7 @@ def handle_auto_detach_candidate(station):
         return "already_processed"
 
     print("====================================")
-    print(f"[AUTO DETACH] detach command target={station}")
+    print(f"[AUTO DETACH TEST] detach command target={station}")
     print("====================================")
 
     if station == HEAD_NAME:
@@ -616,7 +571,9 @@ def guard_listener_loop():
     sock.bind((GUARD_HOST, GUARD_PORT))
 
     print("====================================")
-    print(f"[GUARD] UDP listener started on {GUARD_HOST}:{GUARD_PORT}")
+    print(f"[GUARD TEST] UDP listener started on {GUARD_HOST}:{GUARD_PORT}")
+    print("This listener is for keyboard-side testing only.")
+    print("Real auto-detach should go to head_detach_router.py on HEAD Pi.")
     print("Guard message examples:")
     print("  HEAD,detach_candidate")
     print("  NODE1,detach_candidate")
@@ -662,7 +619,7 @@ def process_pending_guard_events():
 
         if guard_status in DETACH_STATUS_WORDS:
             result = handle_auto_detach_candidate(station)
-            results.append(f"AUTO {station}: {result}")
+            results.append(f"AUTO TEST {station}: {result}")
 
         elif guard_status == "recovered":
             print(f"[GUARD] {station} recovered. no detach action.")
@@ -816,7 +773,7 @@ def draw_screen(
     draw_text(screen, font_text, "4: NODE3 detach -> NODE3 disabled", 45, 865)
     draw_text(screen, font_text, "R: reset detached state", 45, 895)
 
-    draw_text(screen, font_text, f"Guard UDP listener: {GUARD_HOST}:{GUARD_PORT}", 30, 925)
+    draw_text(screen, font_text, f"Guard test listener: {GUARD_HOST}:{GUARD_PORT}", 30, 925)
     draw_text(screen, font_text, "ESC: quit", 30, 950)
 
     pygame.display.flip()
@@ -891,11 +848,8 @@ def main():
     print("  R : reset detached state")
     print("------------------------------------")
     print("Auto detach:")
-    print(f"  Listening guard status on UDP {GUARD_HOST}:{GUARD_PORT}")
-    print("  HEAD,detach_candidate  -> HEAD detach -> NODE1 disabled")
-    print("  NODE1,detach_candidate -> NODE1 detach -> NODE2 disabled")
-    print("  NODE2,detach_candidate -> NODE2 detach -> NODE3 disabled")
-    print("  NODE3,detach_candidate -> NODE3 detach -> NODE3 disabled")
+    print("  Real auto-detach should be handled by head_detach_router.py on HEAD Pi.")
+    print("  keyboard.py guard listener is for testing only.")
     print("------------------------------------")
     print("ESC / close       : quit")
     print("IMPORTANT         : Click pygame window first")
