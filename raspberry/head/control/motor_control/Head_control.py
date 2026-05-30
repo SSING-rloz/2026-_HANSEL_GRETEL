@@ -70,7 +70,7 @@ RIGHT_ENC_B = 26
 # Servo pins
 # ============================================================
 
-HEAD_SERVO_PIN = 12
+HEAD_SERVO_PIN = 17
 DETACH_SERVO_PIN = 6
 
 
