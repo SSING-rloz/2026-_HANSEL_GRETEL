@@ -1,0 +1,11 @@
+# === 비밀정보 포함 — 공개 저장소 커밋/푸시 금지 ===
+# 실제 MAC, 임시 SSH IP(10.180.86.x), AP 비밀번호 등 민감정보 포함
+deliverables/private/
+deliverables/_build/build_private.js
+docs/HANSEL_GRETEL_DEPLOYMENT_AND_OPERATION.md
+
+# Head 로컬 전용 실제 MAC 매핑 (커밋 금지)
+raspberry/head/monitor/station_map.conf
+
+# 자동분리 상태 파일
+/var/lib/hansel/detach_state.json
