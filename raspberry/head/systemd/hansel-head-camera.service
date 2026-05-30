@@ -1,0 +1,16 @@
+[Unit]
+Description=HANSEL Head camera H.264 UDP sender (video 5001)
+Documentation=file:__HEAD_DIR__/camera/run_camera_stream.sh
+After=hansel-ap.service
+Wants=hansel-ap.service
+
+[Service]
+Type=simple
+EnvironmentFile=__HEAD_DIR__/systemd/hansel-head.env
+# Sends raw H.264 Annex-B over UDP to the first hop (default Node1).
+ExecStart=/bin/bash __HEAD_DIR__/camera/run_camera_stream.sh ${VIDEO_FIRST_HOP_IP} ${VIDEO_PORT}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

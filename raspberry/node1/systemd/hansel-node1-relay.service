@@ -1,0 +1,16 @@
+[Unit]
+Description=HANSEL Node1 video UDP relay (5001 -> Node2)
+Documentation=file:__NODE_DIR__/video/run_video_relay.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=__NODE_DIR__/systemd/hansel-node1.env
+# Byte-for-byte raw H.264 Annex-B UDP forward to the next hop.
+ExecStart=/bin/bash __NODE_DIR__/video/run_video_relay.sh ${RELAY_DST_IP} ${RELAY_LISTEN_PORT} ${RELAY_DST_PORT}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

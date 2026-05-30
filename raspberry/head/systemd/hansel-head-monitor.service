@@ -1,0 +1,21 @@
+[Unit]
+Description=HANSEL Head RSSI monitor + auto-detach bridge
+Documentation=file:__HEAD_DIR__/monitor/run_guard_detach.sh
+After=hansel-ap.service hansel-head-control.service
+Wants=hansel-ap.service
+
+[Service]
+Type=simple
+EnvironmentFile=__HEAD_DIR__/systemd/hansel-head.env
+# run_guard_detach.sh runs the monitor pipeline AND the detach bridge.
+# Until station_map.conf has real MACs the bridge safely no-ops (logs skip).
+ExecStart=/bin/bash __HEAD_DIR__/monitor/run_guard_detach.sh \
+    --iface ${MONITOR_IFACE} \
+    --threshold ${MONITOR_THRESHOLD} \
+    --degraded-count ${MONITOR_DEGRADED_COUNT} \
+    --recover-count ${MONITOR_RECOVER_COUNT}
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

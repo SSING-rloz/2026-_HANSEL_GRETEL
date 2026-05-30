@@ -1,0 +1,15 @@
+[Unit]
+Description=HANSEL Node2 motor/servo/detach control server (UDP 5000)
+Documentation=file:__NODE_DIR__/Node2_control.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# RPi.GPIO requires privileged access to GPIO.
+ExecStart=/usr/bin/python3 __NODE_DIR__/Node2_control.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

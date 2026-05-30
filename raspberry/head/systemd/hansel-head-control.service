@@ -1,0 +1,15 @@
+[Unit]
+Description=HANSEL Head control server (UDP 5000 motor/servo/detach)
+Documentation=file:__HEAD_DIR__/control/motor_control/Head_control.py
+After=hansel-ap.service
+Wants=hansel-ap.service
+
+[Service]
+Type=simple
+# RPi.GPIO requires privileged access to /dev/gpiomem and event detection.
+ExecStart=/usr/bin/python3 __HEAD_DIR__/control/motor_control/Head_control.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
