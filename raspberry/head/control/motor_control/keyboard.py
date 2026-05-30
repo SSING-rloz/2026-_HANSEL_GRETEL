@@ -3,6 +3,7 @@ import socket
 import time
 import threading
 import json
+import os
 
 # ============================================================
 # keyboard.py
@@ -46,10 +47,18 @@ import json
 # ============================================================
 
 
-HEAD_IP = "192.168.50.218"
-NODE1_IP = "192.168.50.252"
-NODE2_IP = "192.168.50.179"
+# AP network (HANSEL_HEAD_AP, 192.168.4.0/24).
+# Head Pi is the AP gateway (192.168.4.1, fixed). Node IPs are DHCP-assigned
+# from 192.168.4.10-50, so set them per launch via env vars:
+#   NODE1_IP=192.168.4.x NODE2_IP=192.168.4.y python3 keyboard.py
+HEAD_IP = os.environ.get("HEAD_IP", "192.168.4.1")
+NODE1_IP = os.environ.get("NODE1_IP", "")
+NODE2_IP = os.environ.get("NODE2_IP", "")
 
+if not NODE1_IP or not NODE2_IP:
+    print("[CONFIG] NODE1_IP/NODE2_IP not set; node drive/detach commands will fail until exported.")
+
+# Command/control UDP port (kept at 5000; video is on 5001, guard on 6000).
 PORT = 5000
 
 HEAD_NAME = "HEAD"

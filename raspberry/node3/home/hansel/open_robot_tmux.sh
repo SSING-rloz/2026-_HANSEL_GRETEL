@@ -16,9 +16,19 @@ SESSION="robot"
 
 PI_PASSWORD="1234"
 
-HEAD_HOST="pi@192.168.50.218"
-NODE1_HOST="pi@192.168.50.252"
-NODE2_HOST="pi@192.168.50.179"
+# AP network (HANSEL_HEAD_AP, 192.168.4.0/24).
+# Head Pi is the AP gateway (192.168.4.1, fixed). Node IPs are DHCP-assigned;
+# export them per launch:
+#   NODE1_IP=192.168.4.x NODE2_IP=192.168.4.y ./open_robot_tmux.sh
+HEAD_HOST="pi@${HEAD_IP:-192.168.4.1}"
+NODE1_HOST="pi@${NODE1_IP:-}"
+NODE2_HOST="pi@${NODE2_IP:-}"
+
+if [ -z "$NODE1_IP" ] || [ -z "$NODE2_IP" ]; then
+    echo "[CONFIG] Set NODE1_IP and NODE2_IP env vars (AP DHCP addresses)."
+    echo "Example: NODE1_IP=192.168.4.11 NODE2_IP=192.168.4.12 ./open_robot_tmux.sh"
+    exit 1
+fi
 
 SSH_CMD="sshpass -p $PI_PASSWORD ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2"
 
