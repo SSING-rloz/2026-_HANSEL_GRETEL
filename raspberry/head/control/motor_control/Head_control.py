@@ -32,20 +32,20 @@ IN4_PIN = 22
 
 FRONT_MOTOR_ENABLED = True
 
-FRONT_ENA_PIN = 5
-FRONT_IN1_PIN = 7
-FRONT_IN2_PIN = 8
+FRONT_ENA_PIN = 12
+FRONT_IN1_PIN = 4
+FRONT_IN2_PIN = 25
 
-FRONT_ENB_PIN = 25
-FRONT_IN3_PIN = 19
-FRONT_IN4_PIN = 10
+FRONT_ENB_PIN = 19
+FRONT_IN3_PIN = 5
+FRONT_IN4_PIN = 7
 
 # 앞쪽 모터 방향이 반대로 돌면 True로 바꾸기
 FRONT_LEFT_REVERSE = False
 FRONT_RIGHT_REVERSE = False
 
 # C 키로 앞쪽 DC모터를 따로 돌릴 때 사용할 PWM
-FRONT_MOTOR_KEY_PWM = 70
+FRONT_MOTOR_KEY_PWM = 100
 
 # False면 앞쪽 DC모터는 주행 명령을 따라가지 않고 C 키 명령으로만 동작
 # True면 기존 헤드 좌/우 모터 PWM을 따라감
