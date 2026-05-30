@@ -6,47 +6,53 @@ import json
 
 # ============================================================
 # keyboard.py
+# Multi Raspberry Pi keyboard controller
 # UDP command sender + UDP RSSI guard listener
 #
-# Drive:
-#   UP/DOWN:
-#     all active units move.
+# 기능:
+#   1. 방향키로 로봇 주행 제어
+#   2. U/D로 HEAD 고개 서보 제어
+#   3. RSSI guard 신호 detach_candidate 수신 시 자동 분리
+#   4. 키보드 숫자 1/2/3으로 수동 순차 분리
 #
-#   UP/DOWN + LEFT/RIGHT:
-#     HEAD performs mild steering.
-#     NODE1/NODE2 move slowly straight.
+# 수동 분리:
+#   1 -> HEAD detach servo 작동
+#        이후 NODE1은 주행 명령 대상에서 제외
 #
-#   LEFT/RIGHT only:
-#     HEAD performs strong steering.
-#     NODE1/NODE2 stop.
+#   2 -> NODE1 detach servo 작동
+#        이후 NODE2는 주행 명령 대상에서 제외
 #
-# Detached units do not receive drive commands.
+#   3 -> NODE2 detach servo 작동
+#        이후 NODE2는 주행 명령 대상에서 제외
 #
-# Manual detach:
-#   1 -> HEAD detach servo, then NODE1 is disabled and stopped.
-#   2 -> NODE1 detach servo, then NODE2 is disabled and stopped.
-#   3 -> NODE2 detach servo, then NODE2 is disabled and stopped.
-#   R -> reset detach state for testing.
+#   R -> 분리 상태 초기화, 테스트용
 #
-# Auto detach:
-#   listens on UDP 0.0.0.0:6000.
-#   Examples:
+# 자동 분리:
+#   통신부에서 UDP 6000번 포트로 아래 메시지 수신 시 자동 분리
 #     NODE1,detach_candidate
 #     NODE2,detach_candidate
 #     {"station":"NODE1","guard_status":"detach_candidate"}
 #
-# Mechanical correction:
-#   actual forward/backward is reversed:
-#     UP   -> backward command
-#     DOWN -> forward command
+# 포트:
+#   UDP 5000 -> keyboard.py가 각 Pi로 제어 명령 전송
+#   UDP 6000 -> 통신부가 keyboard.py로 RSSI guard 상태 전송
 #
-#   actual left/right is reversed:
-#     LEFT  -> right command family
-#     RIGHT -> left command family
+# 현재 기구 보정:
+#   실제 전/후진이 반대로 나왔기 때문에
+#     UP   -> backward 명령 전송
+#     DOWN -> forward 명령 전송
+#
+#   실제 좌/우가 반대로 나왔기 때문에
+#     LEFT  -> right 계열 명령 전송
+#     RIGHT -> left 계열 명령 전송
 # ============================================================
 
 
-HEAD_IP = "192.168.50.218"
+# =========================
+# Unit IP / port settings
+# =========================
+
+HEAD_IP = "10.180.86.171"
 NODE1_IP = "192.168.50.252"
 NODE2_IP = "192.168.50.179"
 
@@ -71,6 +77,11 @@ ALL_UNITS = [
     NODE2_UNIT,
 ]
 
+
+# =========================
+# UDP command settings
+# =========================
+
 CONNECT_TIMEOUT = 0.2
 
 UDP_SEND_REPEAT = 2
@@ -79,9 +90,19 @@ UDP_REPEAT_DELAY = 0.01
 DRIVE_SEND_INTERVAL = 0.08
 SERVO_SEND_INTERVAL = 0.08
 
+
+# =========================
+# RSSI guard listener settings
+# =========================
+
 GUARD_HOST = "0.0.0.0"
 GUARD_PORT = 6000
 GUARD_BUFFER_SIZE = 1024
+
+
+# =========================
+# Detached state
+# =========================
 
 detached_units = {
     HEAD_NAME: False,
@@ -94,18 +115,27 @@ pending_guard_events = []
 
 auto_detached_stations = set()
 
+# 자동 분리 매핑
+# NODE1 링크가 약해짐 -> HEAD 분리기 작동 -> NODE1 비활성화
+# NODE2 링크가 약해짐 -> NODE1 분리기 작동 -> NODE2 비활성화
 AUTO_DETACH_ACTION_BY_STATION = {
     "HEAD": "head",
     "HEAD_PI": "head",
     "HEAD-PI": "head",
+
     "NODE1": "head",
     "NODE1_PI": "head",
     "NODE1-PI": "head",
+
     "NODE2": "node1",
     "NODE2_PI": "node1",
     "NODE2-PI": "node1",
 }
 
+
+# =========================
+# UDP send functions
+# =========================
 
 def send_command(ip, port, command):
     message = (command + "\n").encode()
@@ -165,6 +195,7 @@ def send_all_stop():
 
 def send_head_servo(command):
     print(f"[HEAD SERVO SEND] {command}")
+
     name, ip, port = HEAD_UNIT
     send_unit_command(name, ip, port, command)
 
@@ -175,8 +206,20 @@ def force_stop_unit(unit):
     send_unit_command(name, ip, port, "stop")
 
 
-def send_detach_to_head():
-    print("[DETACH SEND] HEAD detach_press")
+# =========================
+# Manual sequential detach functions
+# =========================
+
+def manual_detach_step_1():
+    """
+    키보드 1번:
+      HEAD의 detach servo 작동
+      이후 NODE1은 주행 명령 대상에서 제외
+    """
+    print("====================================")
+    print("[MANUAL DETACH 1] HEAD detach_press")
+    print("====================================")
+
     name, ip, port = HEAD_UNIT
     send_unit_command(name, ip, port, "detach_press")
 
@@ -186,8 +229,16 @@ def send_detach_to_head():
     print("[STATE] NODE1 detached. NODE1 will no longer receive drive commands.")
 
 
-def send_detach_to_node1():
-    print("[DETACH SEND] NODE1 detach_press")
+def manual_detach_step_2():
+    """
+    키보드 2번:
+      NODE1의 detach servo 작동
+      이후 NODE2는 주행 명령 대상에서 제외
+    """
+    print("====================================")
+    print("[MANUAL DETACH 2] NODE1 detach_press")
+    print("====================================")
+
     name, ip, port = NODE1_UNIT
     send_unit_command(name, ip, port, "detach_press")
 
@@ -197,8 +248,16 @@ def send_detach_to_node1():
     print("[STATE] NODE2 detached. NODE2 will no longer receive drive commands.")
 
 
-def send_detach_to_node2():
-    print("[DETACH SEND] NODE2 detach_press")
+def manual_detach_step_3():
+    """
+    키보드 3번:
+      NODE2의 detach servo 작동
+      이후 NODE2는 주행 명령 대상에서 제외
+    """
+    print("====================================")
+    print("[MANUAL DETACH 3] NODE2 detach_press")
+    print("====================================")
+
     name, ip, port = NODE2_UNIT
     send_unit_command(name, ip, port, "detach_press")
 
@@ -208,6 +267,19 @@ def send_detach_to_node2():
     print("[STATE] NODE2 detached. NODE2 will no longer receive drive commands.")
 
 
+# 기존 자동 분리 함수 이름 유지용 alias
+def send_detach_to_head():
+    manual_detach_step_1()
+
+
+def send_detach_to_node1():
+    manual_detach_step_2()
+
+
+def send_detach_to_node2():
+    manual_detach_step_3()
+
+
 def reset_detach_state():
     detached_units[HEAD_NAME] = False
     detached_units[NODE1_NAME] = False
@@ -215,10 +287,25 @@ def reset_detach_state():
 
     auto_detached_stations.clear()
 
+    print("====================================")
     print("[STATE RESET] HEAD, NODE1, NODE2 are active again.")
+    print("====================================")
 
+
+# =========================
+# RSSI guard parsing / auto detach
+# =========================
 
 def parse_guard_message(raw_message):
+    """
+    지원 형식:
+      NODE1,detach_candidate
+      NODE1 detach_candidate
+      {"station":"NODE1","guard_status":"detach_candidate"}
+
+    반환:
+      station, guard_status
+    """
     raw_message = raw_message.strip()
 
     if raw_message == "":
@@ -265,6 +352,11 @@ def parse_guard_message(raw_message):
 
 
 def handle_auto_detach_candidate(station):
+    """
+    자동 분리 정책:
+      NODE1 detach_candidate -> HEAD detach -> NODE1 disabled
+      NODE2 detach_candidate -> NODE1 detach -> NODE2 disabled
+    """
     station = station.upper()
 
     if station in auto_detached_stations:
@@ -277,20 +369,22 @@ def handle_auto_detach_candidate(station):
         print(f"[AUTO DETACH] Unknown station: {station}")
         return "unknown_station"
 
+    print("====================================")
     print(f"[AUTO DETACH] station={station}, action={action}")
+    print("====================================")
 
     if action == "head":
-        send_detach_to_head()
+        manual_detach_step_1()
         auto_detached_stations.add(station)
         return "HEAD detach -> NODE1 disabled"
 
     if action == "node1":
-        send_detach_to_node1()
+        manual_detach_step_2()
         auto_detached_stations.add(station)
         return "NODE1 detach -> NODE2 disabled"
 
     if action == "node2":
-        send_detach_to_node2()
+        manual_detach_step_3()
         auto_detached_stations.add(station)
         return "NODE2 detach -> NODE2 disabled"
 
@@ -358,30 +452,57 @@ def process_pending_guard_events():
     return results
 
 
+# =========================
+# Key interpretation
+# =========================
+
 def get_drive_commands_from_keys(keys):
+    """
+    반환:
+      head_command, node_command
+
+    의도:
+      UP/DOWN:
+        전체 활성 유닛 이동
+
+      UP/DOWN + LEFT/RIGHT:
+        HEAD는 약한 조향주행
+        NODE들은 천천히 직진/후진
+
+      LEFT/RIGHT only:
+        HEAD만 강한 조향
+        NODE들은 정지
+    """
     up = keys[pygame.K_UP]
     down = keys[pygame.K_DOWN]
     left = keys[pygame.K_LEFT]
     right = keys[pygame.K_RIGHT]
 
+    # 실제 전진 + 조향
+    # 실제 전진이 backward 계열이라 backward 명령 사용
+    # 실제 좌우가 반대라 LEFT 입력은 right 계열 사용
     if up and left:
         return "mild_backward_right", "slow_backward"
 
     if up and right:
         return "mild_backward_left", "slow_backward"
 
+    # 실제 후진 + 조향
+    # 실제 후진이 forward 계열이라 forward 명령 사용
     if down and left:
         return "mild_forward_right", "slow_forward"
 
     if down and right:
         return "mild_forward_left", "slow_forward"
 
+    # 실제 전진 / 후진
     if up:
         return "backward", "backward"
 
     if down:
         return "forward", "forward"
 
+    # 강한 단독 조향
     if left:
         return "right", "stop"
 
@@ -404,6 +525,10 @@ def get_head_servo_command_from_keys(keys):
     return None
 
 
+# =========================
+# UI drawing
+# =========================
+
 def draw_text(screen, font, text, x, y):
     rendered = font.render(text, True, (0, 0, 0))
     screen.blit(rendered, (x, y))
@@ -416,7 +541,7 @@ def draw_screen(
     head_drive_command,
     node_drive_command,
     head_servo_command,
-    last_detach_command,
+    last_detach_command
 ):
     screen.fill((245, 245, 245))
 
@@ -425,7 +550,10 @@ def draw_screen(
     draw_text(screen, font_text, f"HEAD drive command: {head_drive_command}", 30, 75)
     draw_text(screen, font_text, f"NODE drive command: {node_drive_command}", 30, 105)
 
-    servo_text = "none" if head_servo_command is None else head_servo_command
+    if head_servo_command is None:
+        servo_text = "none"
+    else:
+        servo_text = head_servo_command
 
     draw_text(screen, font_text, f"HEAD servo command: {servo_text}", 30, 135)
     draw_text(screen, font_text, f"Last detach/guard: {last_detach_command}", 30, 165)
@@ -446,7 +574,7 @@ def draw_screen(
     draw_text(screen, font_text, "Hold U: head goes up", 45, 575)
     draw_text(screen, font_text, "Hold D: head goes down", 45, 605)
 
-    draw_text(screen, font_text, "Manual detach keys:", 30, 655)
+    draw_text(screen, font_text, "Manual sequential detach:", 30, 655)
     draw_text(screen, font_text, "1: HEAD detach -> NODE1 disabled", 45, 685)
     draw_text(screen, font_text, "2: NODE1 detach -> NODE2 disabled", 45, 715)
     draw_text(screen, font_text, "3: NODE2 detach -> NODE2 disabled", 45, 745)
@@ -457,6 +585,10 @@ def draw_screen(
 
     pygame.display.flip()
 
+
+# =========================
+# Main
+# =========================
 
 def main():
     guard_thread = threading.Thread(target=guard_listener_loop)
@@ -499,7 +631,7 @@ def main():
     print("  LEFT only       : HEAD strong steering, NODE stop")
     print("  RIGHT only      : HEAD strong steering, NODE stop")
     print("------------------------------------")
-    print("Manual detach:")
+    print("Manual sequential detach:")
     print("  1 : HEAD detach, then NODE1 disabled")
     print("  2 : NODE1 detach, then NODE2 disabled")
     print("  3 : NODE2 detach, then NODE2 disabled")
@@ -541,16 +673,16 @@ def main():
                         running = False
 
                     elif event.key == pygame.K_1:
-                        send_detach_to_head()
-                        last_detach_command = "HEAD detach_press -> NODE1 disabled"
+                        manual_detach_step_1()
+                        last_detach_command = "MANUAL 1: HEAD detach -> NODE1 disabled"
 
                     elif event.key == pygame.K_2:
-                        send_detach_to_node1()
-                        last_detach_command = "NODE1 detach_press -> NODE2 disabled"
+                        manual_detach_step_2()
+                        last_detach_command = "MANUAL 2: NODE1 detach -> NODE2 disabled"
 
                     elif event.key == pygame.K_3:
-                        send_detach_to_node2()
-                        last_detach_command = "NODE2 detach_press -> NODE2 disabled"
+                        manual_detach_step_3()
+                        last_detach_command = "MANUAL 3: NODE2 detach -> NODE2 disabled"
 
                     elif event.key == pygame.K_r:
                         reset_detach_state()
@@ -592,7 +724,7 @@ def main():
                 head_drive_command,
                 node_drive_command,
                 current_head_servo_command,
-                last_detach_command,
+                last_detach_command
             )
 
             clock.tick(60)
