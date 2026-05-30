@@ -15,7 +15,7 @@ import json
 #   2. U/D로 HEAD 고개 서보 제어
 #   3. C를 누르고 있는 동안 HEAD 앞쪽 고개 유닛 DC모터 2개 회전
 #   4. RSSI guard 신호 detach_candidate 수신 시 자동 분리
-#   5. 키보드 숫자 1/2/3으로 수동 순차 분리
+#   5. 키보드 숫자 1/2/3/4로 수동 순차 분리
 #
 # 수동 분리:
 #   1 -> HEAD detach servo 작동
@@ -25,24 +25,50 @@ import json
 #        이후 NODE2는 주행 명령 대상에서 제외
 #
 #   3 -> NODE2 detach servo 작동
-#        이후 NODE2는 주행 명령 대상에서 제외
+#        이후 NODE3는 주행 명령 대상에서 제외
+#
+#   4 -> NODE3 detach servo 작동
+#        이후 NODE3는 주행 명령 대상에서 제외
 #
 #   R -> 분리 상태 초기화, 테스트용
 #
 # 자동 분리:
 #   통신부에서 UDP 6000번 포트로 아래 메시지 수신 시 자동 분리
-#     NODE1,detach_candidate
-#     NODE2,detach_candidate
-#     {"station":"NODE1","guard_status":"detach_candidate"}
+#
+#   HEAD,detach_candidate
+#     -> HEAD detach servo 작동
+#     -> NODE1 disabled
+#
+#   NODE1,detach_candidate
+#     -> NODE1 detach servo 작동
+#     -> NODE2 disabled
+#
+#   NODE2,detach_candidate
+#     -> NODE2 detach servo 작동
+#     -> NODE3 disabled
+#
+#   NODE3,detach_candidate
+#     -> NODE3 detach servo 작동
+#     -> NODE3 disabled
+#
+# 지원 메시지 예:
+#   NODE1,detach_candidate
+#   NODE1 detach_candidate
+#   NODE1 detach
+#   detach NODE1
+#   detach_node1
+#   node1_detach
+#   {"station":"NODE1","guard_status":"detach_candidate"}
+#   {"target":"NODE1","status":"detach_candidate"}
+#   {"detach_unit":"NODE1"}
 #
 # 포트:
 #   UDP 5000 -> keyboard.py가 각 Pi로 제어 명령 전송
 #   UDP 6000 -> 통신부가 keyboard.py로 RSSI guard 상태 전송
 #
 # IP 설정:
-#   기본값은 AP 네트워크 기준.
 #   실행할 때 환경변수로 바꿀 수 있음:
-#     HEAD_IP=10.180.86.171 NODE1_IP=... NODE2_IP=... python3 keyboard.py
+#     HEAD_IP=10.180.86.171 NODE1_IP=... NODE2_IP=... NODE3_IP=... python3 keyboard.py
 #
 # 현재 기구 보정:
 #   실제 전/후진이 반대로 나왔기 때문에
@@ -129,25 +155,22 @@ pending_guard_events = []
 
 auto_detached_stations = set()
 
-# 자동 분리 매핑
-# NODE1 링크가 약해짐 -> HEAD 분리기 작동 -> NODE1 비활성화
-# NODE2 링크가 약해짐 -> NODE1 분리기 작동 -> NODE2 비활성화
-AUTO_DETACH_ACTION_BY_STATION = {
-    "HEAD": "head",
-    "HEAD_PI": "head",
-    "HEAD-PI": "head",
+VALID_DETACH_TARGETS = {
+    HEAD_NAME,
+    NODE1_NAME,
+    NODE2_NAME,
+    NODE3_NAME,
+}
 
-    "NODE1": "head",
-    "NODE1_PI": "head",
-    "NODE1-PI": "head",
-
-    "NODE2": "node1",
-    "NODE2_PI": "node1",
-    "NODE2-PI": "node1",
-
-    "NODE3": "node2",
-    "NODE3_PI": "node2",
-    "NODE3-PI": "node2",
+DETACH_STATUS_WORDS = {
+    "detach_candidate",
+    "detach",
+    "drop",
+    "drop_candidate",
+    "node_drop",
+    "separate",
+    "separation",
+    "link_degraded",
 }
 
 
@@ -245,12 +268,12 @@ def force_stop_unit(unit):
 
 def manual_detach_step_1():
     """
-    키보드 1번:
+    키보드 1번 또는 HEAD 자동분리:
       HEAD의 detach servo 작동
       이후 NODE1은 주행 명령 대상에서 제외
     """
     print("====================================")
-    print("[MANUAL DETACH 1] HEAD detach_press")
+    print("[DETACH 1] HEAD detach_press -> NODE1 disabled")
     print("====================================")
 
     name, ip, port = HEAD_UNIT
@@ -259,17 +282,19 @@ def manual_detach_step_1():
     detached_units[NODE1_NAME] = True
     force_stop_unit(NODE1_UNIT)
 
+    auto_detached_stations.add(HEAD_NAME)
+
     print("[STATE] NODE1 detached. NODE1 will no longer receive drive commands.")
 
 
 def manual_detach_step_2():
     """
-    키보드 2번:
+    키보드 2번 또는 NODE1 자동분리:
       NODE1의 detach servo 작동
       이후 NODE2는 주행 명령 대상에서 제외
     """
     print("====================================")
-    print("[MANUAL DETACH 2] NODE1 detach_press")
+    print("[DETACH 2] NODE1 detach_press -> NODE2 disabled")
     print("====================================")
 
     name, ip, port = NODE1_UNIT
@@ -278,17 +303,19 @@ def manual_detach_step_2():
     detached_units[NODE2_NAME] = True
     force_stop_unit(NODE2_UNIT)
 
+    auto_detached_stations.add(NODE1_NAME)
+
     print("[STATE] NODE2 detached. NODE2 will no longer receive drive commands.")
 
 
 def manual_detach_step_3():
     """
-    키보드 3번:
+    키보드 3번 또는 NODE2 자동분리:
       NODE2의 detach servo 작동
       이후 NODE3는 주행 명령 대상에서 제외
     """
     print("====================================")
-    print("[MANUAL DETACH 3] NODE2 detach_press")
+    print("[DETACH 3] NODE2 detach_press -> NODE3 disabled")
     print("====================================")
 
     name, ip, port = NODE2_UNIT
@@ -297,10 +324,35 @@ def manual_detach_step_3():
     detached_units[NODE3_NAME] = True
     force_stop_unit(NODE3_UNIT)
 
+    auto_detached_stations.add(NODE2_NAME)
+
     print("[STATE] NODE3 detached. NODE3 will no longer receive drive commands.")
 
 
-# 기존 자동 분리 함수 이름 유지용 alias
+def manual_detach_step_4():
+    """
+    키보드 4번 또는 NODE3 자동분리:
+      NODE3의 detach servo 작동
+      이후 NODE3는 주행 명령 대상에서 제외
+
+    마지막 유닛용 예비 동작.
+    Node3 뒤에 추가 노드가 없으면 NODE3 자체만 정지/비활성화한다.
+    """
+    print("====================================")
+    print("[DETACH 4] NODE3 detach_press -> NODE3 disabled")
+    print("====================================")
+
+    name, ip, port = NODE3_UNIT
+    send_unit_command(name, ip, port, "detach_press")
+
+    detached_units[NODE3_NAME] = True
+    force_stop_unit(NODE3_UNIT)
+
+    auto_detached_stations.add(NODE3_NAME)
+
+    print("[STATE] NODE3 detached. NODE3 will no longer receive drive commands.")
+
+
 def send_detach_to_head():
     manual_detach_step_1()
 
@@ -313,6 +365,10 @@ def send_detach_to_node2():
     manual_detach_step_3()
 
 
+def send_detach_to_node3():
+    manual_detach_step_4()
+
+
 def reset_detach_state():
     detached_units[HEAD_NAME] = False
     detached_units[NODE1_NAME] = False
@@ -322,7 +378,7 @@ def reset_detach_state():
     auto_detached_stations.clear()
 
     print("====================================")
-    print("[STATE RESET] HEAD, NODE1, NODE2 are active again.")
+    print("[STATE RESET] HEAD, NODE1, NODE2, NODE3 are active again.")
     print("====================================")
 
 
@@ -330,15 +386,173 @@ def reset_detach_state():
 # RSSI guard parsing / auto detach
 # =========================
 
+def normalize_station_name(value):
+    if value is None:
+        return None
+
+    text = str(value).strip().upper()
+    text = text.replace("-", "_")
+    text = text.replace(" ", "_")
+
+    aliases = {
+        "HEAD": HEAD_NAME,
+        "HEAD_PI": HEAD_NAME,
+        "HEADPI": HEAD_NAME,
+
+        "NODE1": NODE1_NAME,
+        "NODE1_PI": NODE1_NAME,
+        "NODE1PI": NODE1_NAME,
+        "NODE_1": NODE1_NAME,
+
+        "NODE2": NODE2_NAME,
+        "NODE2_PI": NODE2_NAME,
+        "NODE2PI": NODE2_NAME,
+        "NODE_2": NODE2_NAME,
+
+        "NODE3": NODE3_NAME,
+        "NODE3_PI": NODE3_NAME,
+        "NODE3PI": NODE3_NAME,
+        "NODE_3": NODE3_NAME,
+    }
+
+    return aliases.get(text)
+
+
+def normalize_status(value):
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    text = text.replace("-", "_")
+    text = text.replace(" ", "_")
+
+    return text
+
+
+def parse_guard_json_message(raw_message):
+    try:
+        data = json.loads(raw_message)
+    except Exception as e:
+        print(f"[GUARD PARSE FAIL] JSON error: {e}")
+        return None, None
+
+    target = (
+        data.get("detach_unit")
+        or data.get("detach_target")
+        or data.get("target_unit")
+        or data.get("target")
+        or data.get("station")
+        or data.get("node")
+        or data.get("unit")
+    )
+
+    status = (
+        data.get("guard_status")
+        or data.get("status")
+        or data.get("state")
+        or data.get("command")
+        or data.get("action")
+    )
+
+    station = normalize_station_name(target)
+    guard_status = normalize_status(status)
+
+    if station is not None and guard_status is None:
+        guard_status = "detach_candidate"
+
+    return station, guard_status
+
+
+def parse_guard_text_message(raw_message):
+    normalized = raw_message.strip()
+
+    if normalized == "":
+        return None, None
+
+    upper_normalized = normalized.upper()
+    upper_normalized = upper_normalized.replace("-", "_")
+
+    direct_patterns = {
+        "HEAD_DETACH": HEAD_NAME,
+        "DETACH_HEAD": HEAD_NAME,
+        "HEAD_DROP": HEAD_NAME,
+        "DROP_HEAD": HEAD_NAME,
+
+        "NODE1_DETACH": NODE1_NAME,
+        "DETACH_NODE1": NODE1_NAME,
+        "NODE1_DROP": NODE1_NAME,
+        "DROP_NODE1": NODE1_NAME,
+
+        "NODE2_DETACH": NODE2_NAME,
+        "DETACH_NODE2": NODE2_NAME,
+        "NODE2_DROP": NODE2_NAME,
+        "DROP_NODE2": NODE2_NAME,
+
+        "NODE3_DETACH": NODE3_NAME,
+        "DETACH_NODE3": NODE3_NAME,
+        "NODE3_DROP": NODE3_NAME,
+        "DROP_NODE3": NODE3_NAME,
+    }
+
+    compact = upper_normalized.replace(" ", "_").replace(",", "_").replace(":", "_").replace(";", "_")
+
+    for pattern, station in direct_patterns.items():
+        if pattern in compact:
+            return station, "detach_candidate"
+
+    for delimiter in [",", ":", ";"]:
+        normalized = normalized.replace(delimiter, " ")
+
+    parts = [p.strip() for p in normalized.split() if p.strip()]
+
+    if len(parts) == 1:
+        station = normalize_station_name(parts[0])
+        if station is not None:
+            return station, "detach_candidate"
+        return None, None
+
+    station = None
+    guard_status = None
+
+    for part in parts:
+        maybe_station = normalize_station_name(part)
+        if maybe_station is not None:
+            station = maybe_station
+            break
+
+    for part in parts:
+        maybe_status = normalize_status(part)
+        if maybe_status in DETACH_STATUS_WORDS:
+            guard_status = maybe_status
+            break
+
+    if station is not None and guard_status is None:
+        guard_status = "detach_candidate"
+
+    return station, guard_status
+
+
 def parse_guard_message(raw_message):
     """
+    통신부 guard 메시지 파싱.
+
     지원 형식:
       NODE1,detach_candidate
       NODE1 detach_candidate
+      NODE1 detach
+      detach NODE1
+      node1_detach
+      detach_node1
       {"station":"NODE1","guard_status":"detach_candidate"}
+      {"target":"NODE1","status":"detach_candidate"}
+      {"detach_unit":"NODE1"}
 
     반환:
       station, guard_status
+
+    station의 의미:
+      통신부가 detach 명령을 내린 유닛 이름.
+      NODE1이면 NODE1의 detach servo를 작동시킨다.
     """
     raw_message = raw_message.strip()
 
@@ -346,84 +560,55 @@ def parse_guard_message(raw_message):
         return None, None
 
     if raw_message.startswith("{"):
-        try:
-            data = json.loads(raw_message)
+        return parse_guard_json_message(raw_message)
 
-            station = (
-                data.get("station")
-                or data.get("node")
-                or data.get("unit")
-                or data.get("target")
-            )
-
-            guard_status = (
-                data.get("guard_status")
-                or data.get("status")
-                or data.get("state")
-            )
-
-            if station is None or guard_status is None:
-                return None, None
-
-            return str(station).upper(), str(guard_status).lower()
-
-        except Exception as e:
-            print(f"[GUARD PARSE FAIL] JSON error: {e}")
-            return None, None
-
-    if "," in raw_message:
-        parts = [p.strip() for p in raw_message.split(",")]
-    else:
-        parts = raw_message.split()
-
-    if len(parts) < 2:
-        return None, None
-
-    station = parts[0].upper()
-    guard_status = parts[1].lower()
-
-    return station, guard_status
+    return parse_guard_text_message(raw_message)
 
 
 def handle_auto_detach_candidate(station):
     """
-    자동 분리 정책:
-      NODE1 detach_candidate -> HEAD detach -> NODE1 disabled
-      NODE2 detach_candidate -> NODE1 detach -> NODE2 disabled
+    통신부 자동분리 정책:
+
+      HEAD  detach_candidate -> HEAD  detach -> NODE1 disabled
+      NODE1 detach_candidate -> NODE1 detach -> NODE2 disabled
+      NODE2 detach_candidate -> NODE2 detach -> NODE3 disabled
+      NODE3 detach_candidate -> NODE3 detach -> NODE3 disabled
+
+    여기서 station은 '신호가 약해진 대상'이 아니라
+    통신부가 명령한 'detach를 수행할 유닛'으로 해석한다.
     """
-    station = station.upper()
+    station = normalize_station_name(station)
+
+    if station is None:
+        print("[AUTO DETACH] station is None or unsupported")
+        return "unknown_station"
 
     if station in auto_detached_stations:
         print(f"[AUTO DETACH] {station} already processed. ignored.")
         return "already_processed"
 
-    action = AUTO_DETACH_ACTION_BY_STATION.get(station)
-
-    if action is None:
-        print(f"[AUTO DETACH] Unknown station: {station}")
-        return "unknown_station"
-
     print("====================================")
-    print(f"[AUTO DETACH] station={station}, action={action}")
+    print(f"[AUTO DETACH] detach command target={station}")
     print("====================================")
 
-    if action == "head":
+    if station == HEAD_NAME:
         manual_detach_step_1()
-        auto_detached_stations.add(station)
         return "HEAD detach -> NODE1 disabled"
 
-    if action == "node1":
+    if station == NODE1_NAME:
         manual_detach_step_2()
-        auto_detached_stations.add(station)
         return "NODE1 detach -> NODE2 disabled"
 
-    if action == "node2":
+    if station == NODE2_NAME:
         manual_detach_step_3()
-        auto_detached_stations.add(station)
-        return "NODE2 detach -> NODE2 disabled"
+        return "NODE2 detach -> NODE3 disabled"
 
-    print(f"[AUTO DETACH] Unsupported action: {action}")
-    return "unsupported_action"
+    if station == NODE3_NAME:
+        manual_detach_step_4()
+        return "NODE3 detach -> NODE3 disabled"
+
+    print(f"[AUTO DETACH] Unsupported station: {station}")
+    return "unsupported_station"
 
 
 def guard_listener_loop():
@@ -433,9 +618,15 @@ def guard_listener_loop():
     print("====================================")
     print(f"[GUARD] UDP listener started on {GUARD_HOST}:{GUARD_PORT}")
     print("Guard message examples:")
+    print("  HEAD,detach_candidate")
     print("  NODE1,detach_candidate")
     print("  NODE2,detach_candidate")
+    print("  NODE3,detach_candidate")
+    print("  NODE1 detach")
+    print("  detach NODE1")
+    print("  node1_detach")
     print('  {"station":"NODE1","guard_status":"detach_candidate"}')
+    print('  {"detach_unit":"NODE1"}')
     print("====================================")
 
     while True:
@@ -467,7 +658,9 @@ def process_pending_guard_events():
     results = []
 
     for station, guard_status in guard_events:
-        if guard_status == "detach_candidate":
+        guard_status = normalize_status(guard_status)
+
+        if guard_status in DETACH_STATUS_WORDS:
             result = handle_auto_detach_candidate(station)
             results.append(f"AUTO {station}: {result}")
 
@@ -478,6 +671,10 @@ def process_pending_guard_events():
         elif guard_status == "watching":
             print(f"[GUARD] {station} watching. no detach action.")
             results.append(f"{station}: watching")
+
+        elif guard_status == "link_ok":
+            print(f"[GUARD] {station} link_ok. no detach action.")
+            results.append(f"{station}: link_ok")
 
         else:
             print(f"[GUARD] {station} unsupported status: {guard_status}")
@@ -512,31 +709,24 @@ def get_drive_commands_from_keys(keys):
     left = keys[pygame.K_LEFT]
     right = keys[pygame.K_RIGHT]
 
-    # 실제 전진 + 조향
-    # 실제 전진이 backward 계열이라 backward 명령 사용
-    # 실제 좌우가 반대라 LEFT 입력은 right 계열 사용
     if up and left:
         return "mild_backward_right", "slow_backward"
 
     if up and right:
         return "mild_backward_left", "slow_backward"
 
-    # 실제 후진 + 조향
-    # 실제 후진이 forward 계열이라 forward 명령 사용
     if down and left:
         return "mild_forward_right", "slow_forward"
 
     if down and right:
         return "mild_forward_left", "slow_forward"
 
-    # 실제 전진 / 후진
     if up:
         return "backward", "backward"
 
     if down:
         return "forward", "forward"
 
-    # 강한 단독 조향
     if left:
         return "right", "stop"
 
@@ -602,30 +792,32 @@ def draw_screen(
     draw_text(screen, font_text, f"Last detach/guard: {last_detach_command}", 30, 195)
 
     draw_text(screen, font_text, "Detached state:", 30, 235)
-    draw_text(screen, font_text, f"HEAD detached: {detached_units[NODE1_NAME]}", 45, 265)
-    draw_text(screen, font_text, f"NODE1 detached: {detached_units[NODE2_NAME]}", 45, 295)
-    draw_text(screen, font_text, f"NODE2 detached: {detached_units[NODE3_NAME]}", 45, 325)
+    draw_text(screen, font_text, f"HEAD detached: {detached_units[HEAD_NAME]}", 45, 265)
+    draw_text(screen, font_text, f"NODE1 detached: {detached_units[NODE1_NAME]}", 45, 295)
+    draw_text(screen, font_text, f"NODE2 detached: {detached_units[NODE2_NAME]}", 45, 325)
+    draw_text(screen, font_text, f"NODE3 detached: {detached_units[NODE3_NAME]}", 45, 355)
 
-    draw_text(screen, font_text, "Drive keys:", 30, 375)
-    draw_text(screen, font_text, "UP: actual forward, all active units", 45, 405)
-    draw_text(screen, font_text, "DOWN: actual backward, all active units", 45, 435)
-    draw_text(screen, font_text, "UP + LEFT/RIGHT: HEAD mild turn, NODE slow forward", 45, 465)
-    draw_text(screen, font_text, "DOWN + LEFT/RIGHT: HEAD mild turn, NODE slow backward", 45, 495)
-    draw_text(screen, font_text, "LEFT / RIGHT only: HEAD strong steering, NODE stop", 45, 525)
+    draw_text(screen, font_text, "Drive keys:", 30, 405)
+    draw_text(screen, font_text, "UP: actual forward, all active units", 45, 435)
+    draw_text(screen, font_text, "DOWN: actual backward, all active units", 45, 465)
+    draw_text(screen, font_text, "UP + LEFT/RIGHT: HEAD mild turn, NODE slow forward", 45, 495)
+    draw_text(screen, font_text, "DOWN + LEFT/RIGHT: HEAD mild turn, NODE slow backward", 45, 525)
+    draw_text(screen, font_text, "LEFT / RIGHT only: HEAD strong steering, NODE stop", 45, 555)
 
-    draw_text(screen, font_text, "Head unit keys:", 30, 575)
-    draw_text(screen, font_text, "Hold U: head goes up", 45, 605)
-    draw_text(screen, font_text, "Hold D: head goes down", 45, 635)
-    draw_text(screen, font_text, "Hold C: front head-unit DC motors rotate", 45, 665)
+    draw_text(screen, font_text, "Head unit keys:", 30, 605)
+    draw_text(screen, font_text, "Hold U: head goes up", 45, 635)
+    draw_text(screen, font_text, "Hold D: head goes down", 45, 665)
+    draw_text(screen, font_text, "Hold C: front head-unit DC motors rotate", 45, 695)
 
-    draw_text(screen, font_text, "Manual sequential detach:", 30, 715)
-    draw_text(screen, font_text, "1: HEAD detach -> NODE1 disabled", 45, 745)
-    draw_text(screen, font_text, "2: NODE1 detach -> NODE2 disabled", 45, 775)
-    draw_text(screen, font_text, "3: NODE2 detach -> NODE3 disabled", 45, 805)
-    draw_text(screen, font_text, "R: reset detached state", 45, 835)
+    draw_text(screen, font_text, "Manual sequential detach:", 30, 745)
+    draw_text(screen, font_text, "1: HEAD detach -> NODE1 disabled", 45, 775)
+    draw_text(screen, font_text, "2: NODE1 detach -> NODE2 disabled", 45, 805)
+    draw_text(screen, font_text, "3: NODE2 detach -> NODE3 disabled", 45, 835)
+    draw_text(screen, font_text, "4: NODE3 detach -> NODE3 disabled", 45, 865)
+    draw_text(screen, font_text, "R: reset detached state", 45, 895)
 
-    draw_text(screen, font_text, f"Guard UDP listener: {GUARD_HOST}:{GUARD_PORT}", 30, 865)
-    draw_text(screen, font_text, "ESC: quit", 30, 890)
+    draw_text(screen, font_text, f"Guard UDP listener: {GUARD_HOST}:{GUARD_PORT}", 30, 925)
+    draw_text(screen, font_text, "ESC: quit", 30, 950)
 
     pygame.display.flip()
 
@@ -641,7 +833,7 @@ def main():
 
     pygame.init()
 
-    screen = pygame.display.set_mode((1080, 930))
+    screen = pygame.display.set_mode((1080, 990))
     pygame.display.set_caption("Multi Raspberry Pi Robot UDP Keyboard Control")
 
     font_title = pygame.font.SysFont(None, 36)
@@ -673,6 +865,7 @@ def main():
     print(f"  HEAD_IP  = {HEAD_IP}")
     print(f"  NODE1_IP = {NODE1_IP}")
     print(f"  NODE2_IP = {NODE2_IP}")
+    print(f"  NODE3_IP = {NODE3_IP}")
     print(f"  PORT     = {PORT}")
     print("------------------------------------")
     print("Drive:")
@@ -693,13 +886,16 @@ def main():
     print("Manual sequential detach:")
     print("  1 : HEAD detach, then NODE1 disabled")
     print("  2 : NODE1 detach, then NODE2 disabled")
-    print("  3 : NODE2 detach, then NODE2 disabled")
+    print("  3 : NODE2 detach, then NODE3 disabled")
+    print("  4 : NODE3 detach, then NODE3 disabled")
     print("  R : reset detached state")
     print("------------------------------------")
     print("Auto detach:")
     print(f"  Listening guard status on UDP {GUARD_HOST}:{GUARD_PORT}")
-    print("  NODE1,detach_candidate -> HEAD detach -> NODE1 disabled")
-    print("  NODE2,detach_candidate -> NODE1 detach -> NODE2 disabled")
+    print("  HEAD,detach_candidate  -> HEAD detach -> NODE1 disabled")
+    print("  NODE1,detach_candidate -> NODE1 detach -> NODE2 disabled")
+    print("  NODE2,detach_candidate -> NODE2 detach -> NODE3 disabled")
+    print("  NODE3,detach_candidate -> NODE3 detach -> NODE3 disabled")
     print("------------------------------------")
     print("ESC / close       : quit")
     print("IMPORTANT         : Click pygame window first")
@@ -747,6 +943,10 @@ def main():
                     elif event.key == pygame.K_3:
                         manual_detach_step_3()
                         last_detach_command = "MANUAL 3: NODE2 detach -> NODE3 disabled"
+
+                    elif event.key == pygame.K_4:
+                        manual_detach_step_4()
+                        last_detach_command = "MANUAL 4: NODE3 detach -> NODE3 disabled"
 
                     elif event.key == pygame.K_r:
                         reset_detach_state()
