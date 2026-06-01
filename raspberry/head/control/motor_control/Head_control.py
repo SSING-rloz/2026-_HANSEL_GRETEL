@@ -2,6 +2,7 @@ import socket
 import time
 import threading
 import RPi.GPIO as GPIO
+import pigpio
 
 UNIT_NAME = "HEAD"
 
@@ -73,6 +74,13 @@ RIGHT_ENC_B = 26
 HEAD_SERVO_PIN = 17
 DETACH_SERVO_PIN = 6
 
+# =========================
+# Head servo pigpio settings
+# =========================
+# 45kgcm 고개 서보는 RPi.GPIO 소프트웨어 PWM 대신 pigpio 사용
+HEAD_SERVO_MIN_PULSE_US = 600
+HEAD_SERVO_MAX_PULSE_US = 2400
+HEAD_SERVO_STOP_PULSE_US = 0
 
 # ============================================================
 # UDP server settings
@@ -89,10 +97,10 @@ UDP_BUFFER_SIZE = 1024
 
 PWM_FREQ = 1000
 CONTROL_INTERVAL = 0.05
+ENCODER_POLL_INTERVAL = 0.001
 
 MIN_PWM = 25
 MAX_PWM = 100
-ENCODER_POLL_INTERVAL = 0.001  # seconds between encoder state polls (1 kHz)
 
 FULL_SPEED_CPS_LEFT = 800.0
 FULL_SPEED_CPS_RIGHT = 800.0
@@ -120,15 +128,15 @@ KD_RIGHT = 0.000
 
 SERVO_FREQ = 50
 
-current_head_servo_angle = 90
+current_head_servo_angle = 70
 
-HEAD_SERVO_MIN_ANGLE = 40
-HEAD_SERVO_MAX_ANGLE = 180
-HEAD_SERVO_CENTER_ANGLE = 90
+HEAD_SERVO_MIN_ANGLE = 20
+HEAD_SERVO_MAX_ANGLE = 150
+HEAD_SERVO_CENTER_ANGLE = 70
 HEAD_SERVO_STEP_ANGLE = 2
 
 START_HEAD_SERVO_CENTER_ON_BOOT = True
-HEAD_SERVO_HOLD = True
+HEAD_SERVO_HOLD = False
 
 current_detach_servo_angle = 20
 
@@ -138,7 +146,7 @@ DETACH_REST_ANGLE = 20
 DETACH_PRESS_ANGLE = 75
 DETACH_PRESS_TIME = 0.35
 
-START_DETACH_SERVO_REST_ON_BOOT = True
+START_DETACH_SERVO_REST_ON_BOOT = False
 DETACH_SERVO_HOLD = False
 
 
@@ -248,7 +256,6 @@ GPIO.setup(LEFT_ENC_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(RIGHT_ENC_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(RIGHT_ENC_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-GPIO.setup(HEAD_SERVO_PIN, GPIO.OUT)
 GPIO.setup(DETACH_SERVO_PIN, GPIO.OUT)
 
 pwm_left = GPIO.PWM(ENA_PIN, PWM_FREQ)
@@ -261,7 +268,14 @@ if FRONT_MOTOR_ENABLED:
     front_pwm_left = GPIO.PWM(FRONT_ENA_PIN, PWM_FREQ)
     front_pwm_right = GPIO.PWM(FRONT_ENB_PIN, PWM_FREQ)
 
-head_servo_pwm = GPIO.PWM(HEAD_SERVO_PIN, SERVO_FREQ)
+pigpio_pi = pigpio.pi()
+
+if not pigpio_pi.connected:
+    raise RuntimeError("pigpio daemon is not running. Run: sudo systemctl start pigpiod")
+
+pigpio_pi.set_mode(HEAD_SERVO_PIN, pigpio.OUTPUT)
+pigpio_pi.set_servo_pulsewidth(HEAD_SERVO_PIN, HEAD_SERVO_STOP_PULSE_US)
+
 detach_servo_pwm = GPIO.PWM(DETACH_SERVO_PIN, SERVO_FREQ)
 
 pwm_left.start(0)
@@ -271,7 +285,6 @@ if FRONT_MOTOR_ENABLED:
     front_pwm_left.start(0)
     front_pwm_right.start(0)
 
-head_servo_pwm.start(0)
 detach_servo_pwm.start(0)
 
 
@@ -290,6 +303,15 @@ def clamp_angle(angle, min_angle=0, max_angle=180):
 def angle_to_duty(angle):
     angle = int(clamp(angle, 0, 180))
     return 2.5 + (angle / 18.0)
+
+def angle_to_pulsewidth_us(angle):
+    angle = int(clamp(angle, 0, 180))
+
+    pulse_width = HEAD_SERVO_MIN_PULSE_US + (
+        (angle / 180.0) * (HEAD_SERVO_MAX_PULSE_US - HEAD_SERVO_MIN_PULSE_US)
+    )
+
+    return int(pulse_width)
 
 
 def read_encoder_state(pin_a, pin_b):
@@ -326,18 +348,6 @@ def right_encoder_callback(channel):
         right_count = update_quadrature_count(right_last_state, new_state, right_count)
         right_last_state = new_state
 
-
-left_last_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
-right_last_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
-
-# GPIO.add_event_detect() is broken on RPi.GPIO 0.7.x + kernel 6.12
-# (sysfs edge interface changed). Use a polling thread instead.
-#GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback, bouncetime=1)
-#GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback, bouncetime=1)
-#GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback, bouncetime=1)
-#GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback, bouncetime=1)
-
-
 def encoder_poll_loop():
     global left_count, right_count
     global left_last_state, right_last_state
@@ -364,6 +374,21 @@ def encoder_poll_loop():
 
         time.sleep(ENCODER_POLL_INTERVAL)
 
+left_last_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
+right_last_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
+
+for _enc_pin in (LEFT_ENC_A, LEFT_ENC_B, RIGHT_ENC_A, RIGHT_ENC_B):
+    try:
+        GPIO.remove_event_detect(_enc_pin)
+    except Exception:
+        pass
+
+#GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback, bouncetime=1)
+#GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback, bouncetime=1)
+
+#GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback, bouncetime=1)
+#GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback, bouncetime=1)
+
 
 def set_head_servo_angle(angle):
     global current_head_servo_angle
@@ -374,16 +399,18 @@ def set_head_servo_angle(angle):
         HEAD_SERVO_MAX_ANGLE,
     )
 
-    duty = angle_to_duty(current_head_servo_angle)
+    pulse_width = angle_to_pulsewidth_us(current_head_servo_angle)
 
-    print(f"[{UNIT_NAME}] Head servo angle={current_head_servo_angle}, duty={duty:.2f}%")
+    print(
+        f"[{UNIT_NAME}] Head servo angle={current_head_servo_angle}, "
+        f"pulse={pulse_width}us"
+    )
 
-    head_servo_pwm.ChangeDutyCycle(duty)
+    pigpio_pi.set_servo_pulsewidth(HEAD_SERVO_PIN, pulse_width)
 
     if not HEAD_SERVO_HOLD:
-        time.sleep(0.05)
-        head_servo_pwm.ChangeDutyCycle(0)
-
+        time.sleep(0.08)
+        pigpio_pi.set_servo_pulsewidth(HEAD_SERVO_PIN, HEAD_SERVO_STOP_PULSE_US)
 
 def head_servo_up_step():
     set_head_servo_angle(current_head_servo_angle + HEAD_SERVO_STEP_ANGLE)
@@ -950,7 +977,7 @@ def main():
                 front_pwm_left.ChangeDutyCycle(0)
                 front_pwm_right.ChangeDutyCycle(0)
 
-            head_servo_pwm.ChangeDutyCycle(0)
+            pigpio_pi.set_servo_pulsewidth(HEAD_SERVO_PIN, HEAD_SERVO_STOP_PULSE_US)
             detach_servo_pwm.ChangeDutyCycle(0)
         except Exception:
             pass
@@ -963,8 +990,8 @@ def main():
                 front_pwm_left.stop()
                 front_pwm_right.stop()
 
-            head_servo_pwm.stop()
             detach_servo_pwm.stop()
+            pigpio_pi.stop()
         except Exception:
             pass
 
