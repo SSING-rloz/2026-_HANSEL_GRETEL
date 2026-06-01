@@ -98,7 +98,7 @@ CONTROL_INTERVAL = 0.05
 
 MIN_PWM = 25
 MAX_PWM = 100
-OPEN_LOOP_PWM = 55.0
+ENCODER_POLL_INTERVAL = 0.001  # seconds between encoder state polls (1 kHz)
 
 FULL_SPEED_CPS_LEFT = 800.0
 FULL_SPEED_CPS_RIGHT = 800.0
@@ -300,41 +300,39 @@ def right_encoder_callback(channel):
 left_last_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
 right_last_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
 
-import os as _os
-for _enc_pin in (LEFT_ENC_A, LEFT_ENC_B, RIGHT_ENC_A, RIGHT_ENC_B):
-    try:
-        with open("/sys/class/gpio/export", "w") as _f:
-            _f.write(str(_enc_pin))
-    except OSError:
-        pass
-    _edge = f"/sys/class/gpio/gpio{_enc_pin}/edge"
-    if _os.path.exists(_edge):
-        try:
-            with open(_edge, "w") as _f:
-                _f.write("none")
-        except OSError:
-            pass
-    try:
-        with open("/sys/class/gpio/unexport", "w") as _f:
-            _f.write(str(_enc_pin))
-    except OSError:
-        pass
-    try:
-        GPIO.remove_event_detect(_enc_pin)
-    except Exception:
-        pass
+# GPIO.add_event_detect() is broken on RPi.GPIO 0.7.x + kernel 6.12
+# (sysfs edge interface changed). Use a polling thread instead.
+#GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback, bouncetime=1)
+#GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback, bouncetime=1)
+#GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback, bouncetime=1)
+#GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback, bouncetime=1)
 
-ENCODER_AVAILABLE = True
-try:
-    GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback)
-    GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback)
-    GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback)
-    GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback)
-    print(f"[{UNIT_NAME}] Encoder edge detection OK")
-except RuntimeError as e:
-    ENCODER_AVAILABLE = False
-    print(f"[{UNIT_NAME}] WARNING: encoder edge detection unavailable ({e})")
-    print(f"[{UNIT_NAME}] Falling back to open-loop motor control (PWM={OPEN_LOOP_PWM}%)")
+
+def encoder_poll_loop():
+    global left_count, right_count
+    global left_last_state, right_last_state
+
+    print(f"[{UNIT_NAME}] Encoder polling loop started.")
+
+    while running:
+        with encoder_lock:
+            new_left_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
+            left_count = update_quadrature_count(
+                left_last_state,
+                new_left_state,
+                left_count,
+            )
+            left_last_state = new_left_state
+
+            new_right_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
+            right_count = update_quadrature_count(
+                right_last_state,
+                new_right_state,
+                right_count,
+            )
+            right_last_state = new_right_state
+
+        time.sleep(ENCODER_POLL_INTERVAL)
 
 
 # =========================
@@ -560,33 +558,29 @@ def control_loop():
         measured_left_cps = abs(delta_left) / dt
         measured_right_cps = abs(delta_right) / dt
 
-        if ENCODER_AVAILABLE:
-            left_pwm_value, left_integral, left_prev_error = compute_pid_pwm(
-                left_target_cps,
-                measured_left_cps,
-                FULL_SPEED_CPS_LEFT,
-                KP_LEFT,
-                KI_LEFT,
-                KD_LEFT,
-                left_integral,
-                left_prev_error,
-                dt
-            )
+        left_pwm_value, left_integral, left_prev_error = compute_pid_pwm(
+            left_target_cps,
+            measured_left_cps,
+            FULL_SPEED_CPS_LEFT,
+            KP_LEFT,
+            KI_LEFT,
+            KD_LEFT,
+            left_integral,
+            left_prev_error,
+            dt
+        )
 
-            right_pwm_value, right_integral, right_prev_error = compute_pid_pwm(
-                right_target_cps,
-                measured_right_cps,
-                FULL_SPEED_CPS_RIGHT,
-                KP_RIGHT,
-                KI_RIGHT,
-                KD_RIGHT,
-                right_integral,
-                right_prev_error,
-                dt
-            )
-        else:
-            left_pwm_value = OPEN_LOOP_PWM if left_target_cps > 0 else 0.0
-            right_pwm_value = OPEN_LOOP_PWM if right_target_cps > 0 else 0.0
+        right_pwm_value, right_integral, right_prev_error = compute_pid_pwm(
+            right_target_cps,
+            measured_right_cps,
+            FULL_SPEED_CPS_RIGHT,
+            KP_RIGHT,
+            KI_RIGHT,
+            KD_RIGHT,
+            right_integral,
+            right_prev_error,
+            dt
+        )
 
         if left_target_cps <= 0:
             pwm_left.ChangeDutyCycle(0)
@@ -661,6 +655,10 @@ def main():
 
     if START_DETACH_SERVO_REST_ON_BOOT:
         detach_servo_rest()
+
+    encoder_thread = threading.Thread(target=encoder_poll_loop)
+    encoder_thread.daemon = True
+    encoder_thread.start()
 
     pid_thread = threading.Thread(target=control_loop)
     pid_thread.daemon = True
