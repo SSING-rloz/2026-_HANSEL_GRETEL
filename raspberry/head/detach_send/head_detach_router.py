@@ -19,6 +19,12 @@ from typing import Optional, Tuple
 #   actuator 유닛을 결정한 뒤, 해당 유닛의 control server(UDP 5000)로
 #   "detach_press"를 보낸다.
 #
+# AP IP:
+#   HEAD  = 192.168.4.1
+#   NODE1 = 192.168.4.11
+#   NODE2 = 192.168.4.12
+#   NODE3 = 192.168.4.13
+#
 # 기구 매핑:
 #   NODE1 분리 -> HEAD  detach servo 작동
 #   NODE2 분리 -> NODE1 detach servo 작동
@@ -42,10 +48,10 @@ from typing import Optional, Tuple
 # IP / port settings
 # =========================
 
-HEAD_IP = os.environ.get("HEAD_IP", "127.0.0.1")
-NODE1_IP = os.environ.get("NODE1_IP", "10.180.86.224")
-NODE2_IP = os.environ.get("NODE2_IP", "10.180.86.161")
-NODE3_IP = os.environ.get("NODE3_IP", "10.180.86.242")
+HEAD_IP = os.environ.get("HEAD_IP", "192.168.4.1")
+NODE1_IP = os.environ.get("NODE1_IP", "192.168.4.11")
+NODE2_IP = os.environ.get("NODE2_IP", "192.168.4.12")
+NODE3_IP = os.environ.get("NODE3_IP", "192.168.4.13")
 
 ROBOT_CONTROL_PORT = int(os.environ.get("ROBOT_CONTROL_PORT", "5000"))
 
