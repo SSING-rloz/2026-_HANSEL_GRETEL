@@ -299,6 +299,30 @@ def right_encoder_callback(channel):
 left_last_state = read_encoder_state(LEFT_ENC_A, LEFT_ENC_B)
 right_last_state = read_encoder_state(RIGHT_ENC_A, RIGHT_ENC_B)
 
+import os as _os
+for _enc_pin in (LEFT_ENC_A, LEFT_ENC_B, RIGHT_ENC_A, RIGHT_ENC_B):
+    try:
+        with open("/sys/class/gpio/export", "w") as _f:
+            _f.write(str(_enc_pin))
+    except OSError:
+        pass
+    _edge = f"/sys/class/gpio/gpio{_enc_pin}/edge"
+    if _os.path.exists(_edge):
+        try:
+            with open(_edge, "w") as _f:
+                _f.write("none")
+        except OSError:
+            pass
+    try:
+        with open("/sys/class/gpio/unexport", "w") as _f:
+            _f.write(str(_enc_pin))
+    except OSError:
+        pass
+    try:
+        GPIO.remove_event_detect(_enc_pin)
+    except Exception:
+        pass
+
 GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback)
 GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback)
 
