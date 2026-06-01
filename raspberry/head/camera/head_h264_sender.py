@@ -11,6 +11,7 @@
 # Video UDP port is 5001 (command/control = 5000, guard/auto-detach = 6000).
 
 import argparse
+import io
 import signal
 import socket
 import time
@@ -21,8 +22,11 @@ from picamera2.encoders import H264Encoder
 from picamera2.outputs import FileOutput
 
 
-class UdpChunkWriter:
+# Must derive from io.BufferedIOBase: picamera2's FileOutput rejects a plain
+# object ("must pass io.BufferedIOBase"). The encoder only ever calls write().
+class UdpChunkWriter(io.BufferedIOBase):
     def __init__(self, dst_ip: str, dst_port: int, mtu: int = 1200):
+        super().__init__()
         self.dst = (dst_ip, dst_port)
         self.mtu = mtu
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

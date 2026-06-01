@@ -88,7 +88,8 @@ nmcli connection modify "$CON_NAME" \
     ipv4.gateway "$GATEWAY" \
     ipv4.dns "$DNS" \
     ipv6.method ignore \
-    connection.autoconnect yes
+    connection.autoconnect yes \
+    connection.autoconnect-priority 100
 
 log "bringing connection up"
 nmcli connection up "$CON_NAME" ifname "$IFACE"

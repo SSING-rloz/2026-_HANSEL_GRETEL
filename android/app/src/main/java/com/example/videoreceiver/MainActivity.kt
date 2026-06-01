@@ -13,6 +13,9 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
+import java.nio.ByteBuffer
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -20,8 +23,19 @@ class MainActivity : AppCompatActivity() {
     private var decoder: MediaCodec? = null
 
     @Volatile
-    private var receiving = false
+    private var running = false
     private var receiverThread: Thread? = null
+    private var decodeThread: Thread? = null
+
+    // Decoupling buffer between the network thread and the decode thread.
+    // The receiver only ever reads the socket and pushes complete NAL units
+    // here; the decode thread owns MediaCodec. This keeps the socket drained
+    // even when the decoder blocks, which is what previously caused datagram
+    // loss (and therefore corrupted, never-rendering streams).
+    private val nalQueue = LinkedBlockingQueue<ByteArray>(QUEUE_CAPACITY)
+
+    // Monotonic presentation timestamp, advanced once per coded picture.
+    private var ptsUs = 0L
 
     companion object {
         private const val TAG = "VideoReceiver"
@@ -33,6 +47,21 @@ class MainActivity : AppCompatActivity() {
         // frame/NAL boundaries.
         private const val DEFAULT_VIDEO_PORT = 5001
         private const val UDP_RECV_BUFFER_SIZE = 65536
+
+        private const val MIME_TYPE = "video/avc"
+        private const val VIDEO_WIDTH = 1280
+        private const val VIDEO_HEIGHT = 720
+        private const val VIDEO_FPS = 30
+
+        // Bounded so a stalled decoder can never exhaust memory; on overflow we
+        // drop the OLDEST queued NAL (the freshest data is the most useful).
+        private const val QUEUE_CAPACITY = 1024
+
+        // H.264 NAL unit types (nal_unit_type, header byte & 0x1F).
+        private const val NAL_TYPE_NON_IDR = 1
+        private const val NAL_TYPE_IDR = 5
+        private const val NAL_TYPE_SPS = 7
+        private const val NAL_TYPE_PPS = 8
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +72,12 @@ class MainActivity : AppCompatActivity() {
 
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
-                startDecoder(holder.surface)
+                running = true
+
+                // The decoder is configured lazily by the decode thread once the
+                // first SPS+PPS arrive (so it can be configured with codec-specific
+                // data). Start the decode thread first, then the receiver.
+                startDecodeThread(holder.surface)
 
                 // Live path: receive raw H.264 Annex-B over UDP from the Head Pi.
                 // To play the bundled assets/test.h264 instead (offline test),
@@ -61,81 +95,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                stopUdpReceiver()
-                stopDecoder()
+                stopAll()
             }
         })
     }
 
-    private fun startDecoder(surface: Surface) {
-        if (decoder != null) return
-
-        val mimeType = "video/avc"//Android에서 H.264/AVC 디코더를 요청
-        val width = 1280
-        val height = 720
-
-        val format = MediaFormat.createVideoFormat(mimeType, width, height)
-
-        decoder = MediaCodec.createDecoderByType(mimeType).apply {
-            configure(format, surface, null, 0)
-            start()
-        }
-
-        Log.d(TAG, "H.264 decoder started: ${width}x$height")
-    }
-
-    private fun stopDecoder() {
-        decoder?.let {
-            try {
-                it.stop()
-                it.release()
-            } catch (e: Exception) {
-                Log.e(TAG, "stopDecoder failed", e)
-            }
-        }
-
-        decoder = null
-        Log.d(TAG, "H.264 decoder stopped")
-    }
-
-    private fun feedDecoder(data: ByteArray) {
-        val codec = decoder ?: return
-
-        val inputIndex = codec.dequeueInputBuffer(10000)
-
-        if (inputIndex >= 0) {
-            val inputBuffer = codec.getInputBuffer(inputIndex)
-            inputBuffer?.clear()
-
-            if (inputBuffer == null || data.size > inputBuffer.capacity()) {
-                Log.e(TAG, "input buffer too small. data=${data.size}, capacity=${inputBuffer?.capacity()}")
-                return
-            }
-
-            inputBuffer.put(data)
-
-            codec.queueInputBuffer(
-                inputIndex,
-                0,
-                data.size,
-                System.nanoTime() / 1000,
-                0
-            )
-        }
-
-        val bufferInfo = MediaCodec.BufferInfo()
-        var outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
-
-        while (outputIndex >= 0) {
-            Log.d(TAG, "output frame: size=${bufferInfo.size}, pts=${bufferInfo.presentationTimeUs}")
-            codec.releaseOutputBuffer(outputIndex, true)
-            outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
-        }
-    }
+    // =========================================================================
+    // Receiver thread: socket -> NAL queue (never touches MediaCodec)
+    // =========================================================================
 
     private fun startUdpReceiver(port: Int) {
-        if (receiving) return
-        receiving = true
+        if (receiverThread != null) return
 
         receiverThread = Thread {
             var socket: DatagramSocket? = null
@@ -144,6 +114,9 @@ class MainActivity : AppCompatActivity() {
                     reuseAddress = true
                     bind(InetSocketAddress(port))
                     soTimeout = 1000
+                    // A generous OS receive buffer absorbs bursts (large I-frames
+                    // arrive as many back-to-back ~1200B datagrams).
+                    receiveBufferSize = 1 shl 20
                 }
 
                 Log.d(TAG, "UDP receiver listening on :$port (raw H.264 Annex-B over UDP)")
@@ -151,7 +124,7 @@ class MainActivity : AppCompatActivity() {
                 val packet = DatagramPacket(ByteArray(UDP_RECV_BUFFER_SIZE), UDP_RECV_BUFFER_SIZE)
                 val stream = ByteArrayOutputStream()
 
-                while (receiving) {
+                while (running) {
                     try {
                         socket.receive(packet)
                     } catch (e: SocketTimeoutException) {
@@ -159,11 +132,11 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     // Datagram boundaries are NOT NAL boundaries: accumulate, then
-                    // re-split on Annex-B start codes.
+                    // re-split on Annex-B start codes and enqueue complete NALs.
                     stream.write(packet.data, packet.offset, packet.length)
 
                     val buffered = stream.toByteArray()
-                    val consumed = drainNalUnits(buffered)
+                    val consumed = drainNalUnitsToQueue(buffered)
 
                     if (consumed > 0) {
                         stream.reset()
@@ -173,7 +146,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                if (receiving) {
+                if (running) {
                     Log.e(TAG, "UDP receiver failed", e)
                 }
             } finally {
@@ -183,17 +156,11 @@ class MainActivity : AppCompatActivity() {
         }.also { it.start() }
     }
 
-    private fun stopUdpReceiver() {
-        receiving = false
-        receiverThread?.interrupt()
-        receiverThread = null
-    }
-
-    // Feeds every complete NAL unit found in the accumulated buffer and returns
-    // the number of leading bytes consumed. The trailing (possibly incomplete)
-    // NAL unit — everything from the last start code onward — is left for the
-    // next datagram.
-    private fun drainNalUnits(data: ByteArray): Int {
+    // Splits every complete NAL unit out of the accumulated buffer and enqueues
+    // it. Returns the number of leading bytes consumed. The trailing (possibly
+    // incomplete) NAL — everything from the last start code onward — is left for
+    // the next datagram.
+    private fun drainNalUnitsToQueue(data: ByteArray): Int {
         val starts = mutableListOf<Int>()
 
         var i = 0
@@ -211,17 +178,188 @@ class MainActivity : AppCompatActivity() {
         if (starts.size < 2) return 0
 
         for (idx in 0 until starts.size - 1) {
-            val start = starts[idx]
-            val end = starts[idx + 1]
-            feedDecoder(data.copyOfRange(start, end))
+            enqueueNal(data.copyOfRange(starts[idx], starts[idx + 1]))
         }
 
         return starts.last()
     }
 
-    // Offline test path: decode the bundled assets/test.h264 instead of the
-    // network stream. Not used in the live UDP path; kept for debugging.
-    private fun runAssetTestPlayback() {
+    private fun enqueueNal(nal: ByteArray) {
+        // Drop the oldest if the decoder has fallen behind, so the queue can
+        // never grow without bound. Fresh data is preferred over stale.
+        if (!nalQueue.offer(nal)) {
+            nalQueue.poll()
+            nalQueue.offer(nal)
+        }
+    }
+
+    // =========================================================================
+    // Decode thread: NAL queue -> MediaCodec (owns the decoder)
+    // =========================================================================
+
+    private fun startDecodeThread(surface: Surface) {
+        if (decodeThread != null) return
+
+        decodeThread = Thread {
+            try {
+                decodeLoop(surface)
+            } catch (e: Exception) {
+                if (running) {
+                    Log.e(TAG, "decode thread failed", e)
+                }
+            } finally {
+                stopDecoder()
+            }
+        }.also { it.start() }
+    }
+
+    private fun decodeLoop(surface: Surface) {
+        // Phase 1: collect codec-specific data (SPS + PPS) before configuring.
+        var sps: ByteArray? = null
+        var pps: ByteArray? = null
+
+        while (running && (sps == null || pps == null)) {
+            val nal = nalQueue.poll(500, TimeUnit.MILLISECONDS) ?: continue
+            when (nalType(nal)) {
+                NAL_TYPE_SPS -> sps = nal
+                NAL_TYPE_PPS -> pps = nal
+            }
+        }
+
+        val spsNal = sps ?: return
+        val ppsNal = pps ?: return
+
+        // Phase 2: configure the decoder WITH the parameter sets. csd-0/csd-1
+        // take the Annex-B SPS/PPS (start code included), which is exactly what
+        // we captured above.
+        val format = MediaFormat.createVideoFormat(MIME_TYPE, VIDEO_WIDTH, VIDEO_HEIGHT).apply {
+            setByteBuffer("csd-0", ByteBuffer.wrap(spsNal))
+            setByteBuffer("csd-1", ByteBuffer.wrap(ppsNal))
+        }
+
+        val codec = MediaCodec.createDecoderByType(MIME_TYPE).apply {
+            configure(format, surface, null, 0)
+            start()
+        }
+        decoder = codec
+        Log.d(TAG, "H.264 decoder configured with in-stream SPS/PPS: ${VIDEO_WIDTH}x$VIDEO_HEIGHT")
+
+        // Phase 3: feed NALs. Skip delta frames until the first IDR so the
+        // decoder always starts from a clean keyframe.
+        val bufferInfo = MediaCodec.BufferInfo()
+        var sawKeyFrame = false
+
+        while (running) {
+            val nal = nalQueue.poll(500, TimeUnit.MILLISECONDS)
+            if (nal == null) {
+                drainOutput(codec, bufferInfo)
+                continue
+            }
+
+            val type = nalType(nal)
+            if (!sawKeyFrame) {
+                when (type) {
+                    NAL_TYPE_IDR -> sawKeyFrame = true
+                    NAL_TYPE_SPS, NAL_TYPE_PPS -> { /* fall through and feed */ }
+                    else -> continue // drop P-frames that precede the first IDR
+                }
+            }
+
+            // Feed with retry: if no input buffer is free right now, keep
+            // draining output and try again rather than DROPPING the NAL (a
+            // dropped SPS/PPS/IDR would stall decoding indefinitely).
+            while (running && !feedNal(codec, nal, type)) {
+                drainOutput(codec, bufferInfo)
+            }
+            drainOutput(codec, bufferInfo)
+        }
+    }
+
+    // Submits one NAL to the decoder. Returns false if no input buffer was
+    // available (caller should retry), true once the NAL has been handled.
+    private fun feedNal(codec: MediaCodec, nal: ByteArray, type: Int): Boolean {
+        val inputIndex = codec.dequeueInputBuffer(10000)
+        if (inputIndex < 0) return false
+
+        val inputBuffer = codec.getInputBuffer(inputIndex)
+        if (inputBuffer == null) {
+            // Hand the buffer back so it is not leaked.
+            codec.queueInputBuffer(inputIndex, 0, 0, 0, 0)
+            return true
+        }
+
+        if (nal.size > inputBuffer.capacity()) {
+            // Should not happen for 720p/1Mbps, but never overflow the buffer.
+            Log.e(TAG, "NAL too large: ${nal.size} > ${inputBuffer.capacity()}, skipping")
+            codec.queueInputBuffer(inputIndex, 0, 0, 0, 0)
+            return true
+        }
+
+        inputBuffer.clear()
+        inputBuffer.put(nal)
+
+        val isConfig = type == NAL_TYPE_SPS || type == NAL_TYPE_PPS
+        val flags = if (isConfig) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
+        val pts = if (isConfig) 0L else ptsUs
+
+        // Advance the clock once per coded picture (slice NALs).
+        if (type == NAL_TYPE_IDR || type == NAL_TYPE_NON_IDR) {
+            ptsUs += 1_000_000L / VIDEO_FPS
+        }
+
+        codec.queueInputBuffer(inputIndex, 0, nal.size, pts, flags)
+        return true
+    }
+
+    private fun drainOutput(codec: MediaCodec, bufferInfo: MediaCodec.BufferInfo) {
+        var outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+        while (outputIndex >= 0) {
+            codec.releaseOutputBuffer(outputIndex, true)
+            outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+        }
+    }
+
+    // =========================================================================
+    // Lifecycle / teardown
+    // =========================================================================
+
+    private fun stopAll() {
+        running = false
+
+        receiverThread?.interrupt()
+        receiverThread = null
+
+        decodeThread?.interrupt()
+        decodeThread = null
+
+        nalQueue.clear()
+    }
+
+    private fun stopDecoder() {
+        decoder?.let {
+            try {
+                it.stop()
+                it.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "stopDecoder failed", e)
+            }
+        }
+
+        decoder = null
+        Log.d(TAG, "H.264 decoder stopped")
+    }
+
+    // =========================================================================
+    // Offline test path (decode the bundled assets/test.h264, no network)
+    // =========================================================================
+
+    // Not used in the live UDP path; kept for debugging. Routes the asset
+    // through the SAME decode thread (queue -> SPS/PPS config -> IDR gate), so
+    // it exercises the real decode path.
+    private fun runAssetTestPlayback(surface: Surface) {
+        running = true
+        startDecodeThread(surface)
+
         Thread {
             try {
                 val bytes = assets.open("test.h264").readBytes()
@@ -232,7 +370,7 @@ class MainActivity : AppCompatActivity() {
 
                 for ((index, nal) in nalUnits.withIndex()) {
                     logNalInfo(index, nal)
-                    feedDecoder(nal)
+                    enqueueNal(nal)
                     Thread.sleep(33) // 30fps 기준
                 }
             } catch (e: Exception) {
@@ -269,6 +407,14 @@ class MainActivity : AppCompatActivity() {
         return nalUnits
     }
 
+    // Returns the nal_unit_type, or -1 if this byte array does not begin with a
+    // valid Annex-B start code.
+    private fun nalType(nal: ByteArray): Int {
+        val startCodeLength = getStartCodeLength(nal, 0)
+        if (startCodeLength <= 0 || nal.size <= startCodeLength) return -1
+        return nal[startCodeLength].toInt() and 0x1F
+    }
+
     private fun getStartCodeLength(data: ByteArray, offset: Int): Int {
         if (
             offset + 3 < data.size &&
@@ -301,9 +447,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         val nalHeader = nal[startCodeLength].toInt() and 0xFF
-        val nalType = nalHeader and 0x1F
+        val nalTypeValue = nalHeader and 0x1F
 
-        val typeName = when (nalType) {
+        val typeName = when (nalTypeValue) {
             1 -> "non-IDR slice / P-frame"
             5 -> "IDR slice / key frame"
             6 -> "SEI"
@@ -313,6 +459,6 @@ class MainActivity : AppCompatActivity() {
             else -> "other"
         }
 
-        Log.d(TAG, "NAL[$index]: type=$nalType ($typeName), size=${nal.size}")
+        Log.d(TAG, "NAL[$index]: type=$nalTypeValue ($typeName), size=${nal.size}")
     }
 }
