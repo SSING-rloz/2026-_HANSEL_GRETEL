@@ -14,8 +14,7 @@ import json
 #   1. 방향키로 로봇 주행 제어
 #   2. U/D로 HEAD 고개 서보 제어
 #   3. C를 누르고 있는 동안 HEAD 앞쪽 고개 유닛 DC모터 2개 회전
-#   4. RSSI guard 신호 detach_candidate 수신 시 자동 분리
-#   5. 키보드 숫자 1/2/3/4로 수동 순차 분리
+#   4. 키보드 숫자 1/2/3/4로 수동 순차 분리
 #
 # 수동 분리:
 #   1 -> HEAD detach servo 작동
@@ -34,13 +33,17 @@ import json
 #
 # 포트:
 #   UDP 5000 -> keyboard.py가 각 Pi로 제어 명령 전송
-#   UDP 6000 -> 테스트/디버깅용 guard listener
+#   UDP 6000 -> keyboard.py 테스트용 guard listener
 #
 # AP IP 설정:
 #   HEAD  = 192.168.4.1
 #   NODE1 = 192.168.4.11
 #   NODE2 = 192.168.4.12
 #   NODE3 = 192.168.4.13
+#
+# 실제 자동분리:
+#   실제 자동분리는 keyboard.py가 아니라 HEAD Pi의 head_detach_router.py에서 처리한다.
+#   keyboard.py의 숫자 detach는 테스트용이다.
 #
 # 현재 기구 보정:
 #   실제 전/후진이 반대로 나왔기 때문에
@@ -105,6 +108,8 @@ FRONT_MOTOR_SEND_INTERVAL = 0.08
 # =========================
 # RSSI guard listener settings
 # =========================
+# 실제 자동분리는 head_detach_router.py에서 처리.
+# 여기는 keyboard.py에서 테스트할 때만 사용.
 
 GUARD_HOST = "0.0.0.0"
 GUARD_PORT = int(os.environ.get("GUARD_PORT", "6000"))
@@ -355,7 +360,7 @@ def reset_detach_state():
 
 
 # =========================
-# RSSI guard parsing / auto detach
+# RSSI guard parsing / test auto detach
 # =========================
 
 def normalize_station_name(value):
@@ -506,10 +511,11 @@ def parse_guard_text_message(raw_message):
 
 def parse_guard_message(raw_message):
     """
-    테스트/디버깅용 guard 메시지 파싱.
+    keyboard.py 테스트용 guard 메시지 파싱.
 
-    실제 자동분리 운용은 head_detach_router.py 쪽에서 처리하고,
-    이 keyboard.py의 guard listener는 수동 검증용으로만 사용한다.
+    실제 자동분리는:
+      통신부 -> HEAD Pi의 head_detach_router.py -> actor 유닛 control server
+    흐름으로 처리한다.
     """
     raw_message = raw_message.strip()
 
@@ -526,20 +532,17 @@ def handle_auto_detach_candidate(station):
     """
     keyboard.py 내부 테스트용 자동분리 정책.
 
-    실제 자동분리는:
-      통신부 -> HEAD의 head_detach_router.py -> actor 유닛 control server
-    흐름으로 처리한다.
-
-    여기서는 키보드/노트북에서 테스트할 때만 사용한다.
+    실제 자동분리는 head_detach_router.py에서 처리한다.
+    여기서는 노트북에서 테스트할 때만 사용한다.
     """
     station = normalize_station_name(station)
 
     if station is None:
-        print("[AUTO DETACH] station is None or unsupported")
+        print("[AUTO DETACH TEST] station is None or unsupported")
         return "unknown_station"
 
     if station in auto_detached_stations:
-        print(f"[AUTO DETACH] {station} already processed. ignored.")
+        print(f"[AUTO DETACH TEST] {station} already processed. ignored.")
         return "already_processed"
 
     print("====================================")
@@ -562,7 +565,7 @@ def handle_auto_detach_candidate(station):
         manual_detach_step_4()
         return "NODE3 detach -> NODE3 disabled"
 
-    print(f"[AUTO DETACH] Unsupported station: {station}")
+    print(f"[AUTO DETACH TEST] Unsupported station: {station}")
     return "unsupported_station"
 
 
@@ -594,16 +597,16 @@ def guard_listener_loop():
             station, guard_status = parse_guard_message(raw_message)
 
             if station is None or guard_status is None:
-                print(f"[GUARD] Invalid message from {addr}: {raw_message}")
+                print(f"[GUARD TEST] Invalid message from {addr}: {raw_message}")
                 continue
 
-            print(f"[GUARD] from {addr}: station={station}, status={guard_status}")
+            print(f"[GUARD TEST] from {addr}: station={station}, status={guard_status}")
 
             with guard_event_lock:
                 pending_guard_events.append((station, guard_status))
 
         except Exception as e:
-            print(f"[GUARD] listener error: {e}")
+            print(f"[GUARD TEST] listener error: {e}")
             time.sleep(0.1)
 
 
@@ -622,19 +625,19 @@ def process_pending_guard_events():
             results.append(f"AUTO TEST {station}: {result}")
 
         elif guard_status == "recovered":
-            print(f"[GUARD] {station} recovered. no detach action.")
+            print(f"[GUARD TEST] {station} recovered. no detach action.")
             results.append(f"{station}: recovered")
 
         elif guard_status == "watching":
-            print(f"[GUARD] {station} watching. no detach action.")
+            print(f"[GUARD TEST] {station} watching. no detach action.")
             results.append(f"{station}: watching")
 
         elif guard_status == "link_ok":
-            print(f"[GUARD] {station} link_ok. no detach action.")
+            print(f"[GUARD TEST] {station} link_ok. no detach action.")
             results.append(f"{station}: link_ok")
 
         else:
-            print(f"[GUARD] {station} unsupported status: {guard_status}")
+            print(f"[GUARD TEST] {station} unsupported status: {guard_status}")
             results.append(f"{station}: unsupported {guard_status}")
 
     return results

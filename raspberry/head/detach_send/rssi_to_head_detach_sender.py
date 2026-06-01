@@ -17,6 +17,12 @@ from typing import Optional
 #   판단하면, 각 Node로 직접 detach_press를 보내지 않고 HEAD Pi의
 #   head_detach_router.py로 detach request를 보낸다.
 #
+# AP IP:
+#   HEAD  = 192.168.4.1
+#   NODE1 = 192.168.4.11
+#   NODE2 = 192.168.4.12
+#   NODE3 = 192.168.4.13
+#
 # 최종 흐름:
 #   통신부 RSSI 판단
 #   -> request_detach_from_head("NODE2")
@@ -27,7 +33,7 @@ from typing import Optional
 #   -> NODE2 분리
 # ============================================================
 
-HEAD_DETACH_ROUTER_IP = os.environ.get("HEAD_DETACH_ROUTER_IP", os.environ.get("HEAD_IP", "10.180.86.171"))
+HEAD_DETACH_ROUTER_IP = os.environ.get("HEAD_DETACH_ROUTER_IP", os.environ.get("HEAD_IP", "192.168.4.1"))
 HEAD_DETACH_ROUTER_PORT = int(os.environ.get("HEAD_DETACH_ROUTER_PORT", "6000"))
 
 UDP_SEND_REPEAT = int(os.environ.get("DETACH_REQUEST_SEND_REPEAT", "3"))
