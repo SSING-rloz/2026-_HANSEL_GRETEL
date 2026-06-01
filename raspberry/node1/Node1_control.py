@@ -27,6 +27,7 @@ PWM_FREQ = 1000
 CONTROL_INTERVAL = 0.05
 MIN_PWM = 25
 MAX_PWM = 100
+OPEN_LOOP_PWM = 55.0
 
 FULL_SPEED_CPS_LEFT = 800.0
 FULL_SPEED_CPS_RIGHT = 800.0
@@ -204,10 +205,17 @@ for _enc_pin in (LEFT_ENC_A, LEFT_ENC_B, RIGHT_ENC_A, RIGHT_ENC_B):
     except Exception:
         pass
 
-GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback)
-GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback)
-GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback)
-GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback)
+ENCODER_AVAILABLE = True
+try:
+    GPIO.add_event_detect(LEFT_ENC_A, GPIO.BOTH, callback=left_encoder_callback)
+    GPIO.add_event_detect(LEFT_ENC_B, GPIO.BOTH, callback=left_encoder_callback)
+    GPIO.add_event_detect(RIGHT_ENC_A, GPIO.BOTH, callback=right_encoder_callback)
+    GPIO.add_event_detect(RIGHT_ENC_B, GPIO.BOTH, callback=right_encoder_callback)
+    print(f"[{UNIT_NAME}] Encoder edge detection OK")
+except RuntimeError as e:
+    ENCODER_AVAILABLE = False
+    print(f"[{UNIT_NAME}] WARNING: encoder edge detection unavailable ({e})")
+    print(f"[{UNIT_NAME}] Falling back to open-loop motor control (PWM={OPEN_LOOP_PWM}%)")
 
 
 def set_detach_servo_angle(angle, hold=None):
@@ -384,29 +392,33 @@ def control_loop():
         measured_left_cps = abs(delta_left) / dt
         measured_right_cps = abs(delta_right) / dt
 
-        left_pwm_value, left_integral, left_prev_error = compute_pid_pwm(
-            left_target_cps,
-            measured_left_cps,
-            FULL_SPEED_CPS_LEFT,
-            KP_LEFT,
-            KI_LEFT,
-            KD_LEFT,
-            left_integral,
-            left_prev_error,
-            dt,
-        )
+        if ENCODER_AVAILABLE:
+            left_pwm_value, left_integral, left_prev_error = compute_pid_pwm(
+                left_target_cps,
+                measured_left_cps,
+                FULL_SPEED_CPS_LEFT,
+                KP_LEFT,
+                KI_LEFT,
+                KD_LEFT,
+                left_integral,
+                left_prev_error,
+                dt,
+            )
 
-        right_pwm_value, right_integral, right_prev_error = compute_pid_pwm(
-            right_target_cps,
-            measured_right_cps,
-            FULL_SPEED_CPS_RIGHT,
-            KP_RIGHT,
-            KI_RIGHT,
-            KD_RIGHT,
-            right_integral,
-            right_prev_error,
-            dt,
-        )
+            right_pwm_value, right_integral, right_prev_error = compute_pid_pwm(
+                right_target_cps,
+                measured_right_cps,
+                FULL_SPEED_CPS_RIGHT,
+                KP_RIGHT,
+                KI_RIGHT,
+                KD_RIGHT,
+                right_integral,
+                right_prev_error,
+                dt,
+            )
+        else:
+            left_pwm_value = OPEN_LOOP_PWM if left_target_cps > 0 else 0.0
+            right_pwm_value = OPEN_LOOP_PWM if right_target_cps > 0 else 0.0
 
         pwm_left.ChangeDutyCycle(0 if left_target_cps <= 0 else left_pwm_value)
         pwm_right.ChangeDutyCycle(0 if right_target_cps <= 0 else right_pwm_value)
