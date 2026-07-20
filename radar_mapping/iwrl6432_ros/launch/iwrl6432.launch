@@ -1,0 +1,101 @@
+<launch>
+  <arg name="port" default="/dev/ttyACM0"/>
+  <arg name="config_file" default="$(find iwrl6432_ros)/config/MotionDetect.cfg"/>
+  <arg name="frame_id" default="radar_link"/>
+  <arg name="min_snr" default="0.0"/>
+  <arg name="min_range" default="0.0"/>
+  <arg name="max_range" default="20.0"/>
+  <arg name="z_min" default="-10.0"/>
+  <arg name="z_max" default="10.0"/>
+  <arg name="rviz" default="true"/>
+  <arg name="scan_output_frame" default="base_link"/>
+  <!-- Candidate sensor-to-ROS mapping: X_ros=Y_radar, Y_ros=-X_radar, Z_ros=Z_radar. -->
+  <arg name="ros_x_from" default="y"/>
+  <arg name="ros_y_from" default="x"/>
+  <arg name="ros_z_from" default="z"/>
+  <arg name="ros_x_sign" default="1.0"/>
+  <arg name="ros_y_sign" default="-1.0"/>
+  <arg name="ros_z_sign" default="1.0"/>
+  <arg name="radar_yaw" default="-1.57079632679"/>
+  <arg name="scan_angle_min" default="-1.396"/>
+  <arg name="scan_angle_max" default="1.396"/>
+  <arg name="scan_angle_increment" default="0.01745329252"/>
+  <arg name="scan_range_min" default="0.25"/>
+  <arg name="scan_range_max" default="7.5"/>
+  <arg name="scan_z_min" default="-0.5"/>
+  <arg name="scan_z_max" default="0.5"/>
+  <arg name="scan_min_snr" default="15.0"/>
+  <arg name="temporal_window" default="3"/>
+  <arg name="guide_max_range" default="3.0"/>
+  <arg name="guide_ring_interval" default="0.5"/>
+  <arg name="guide_fov_deg" default="90.0"/>
+  <arg name="enable_manual_mapping" default="true"/>
+  <arg name="mapping_max_points" default="100000"/>
+  <arg name="mapping_voxel_size" default="0.05"/>
+
+  <node pkg="tf" type="static_transform_publisher" name="base_to_radar"
+        args="0 0 0 $(arg radar_yaw) 0 0 base_link radar_link 100"/>
+
+  <node pkg="iwrl6432_ros" type="radar_driver_node.py"
+        name="radar_driver" output="screen" required="true">
+    <param name="port" value="$(arg port)"/>
+    <param name="config_file" value="$(arg config_file)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+    <param name="min_snr" value="$(arg min_snr)"/>
+    <param name="min_range" value="$(arg min_range)"/>
+    <param name="max_range" value="$(arg max_range)"/>
+    <param name="z_min" value="$(arg z_min)"/>
+    <param name="z_max" value="$(arg z_max)"/>
+  </node>
+
+  <node pkg="iwrl6432_ros" type="radar_to_laserscan_node.py"
+        name="radar_to_laserscan" output="screen">
+    <param name="input_topic" value="/radar/points"/>
+    <param name="output_topic" value="/radar/scan"/>
+    <param name="output_frame" value="$(arg scan_output_frame)"/>
+    <param name="ros_x_from" value="$(arg ros_x_from)"/>
+    <param name="ros_y_from" value="$(arg ros_y_from)"/>
+    <param name="ros_z_from" value="$(arg ros_z_from)"/>
+    <param name="ros_x_sign" value="$(arg ros_x_sign)"/>
+    <param name="ros_y_sign" value="$(arg ros_y_sign)"/>
+    <param name="ros_z_sign" value="$(arg ros_z_sign)"/>
+    <param name="angle_min" value="$(arg scan_angle_min)"/>
+    <param name="angle_max" value="$(arg scan_angle_max)"/>
+    <param name="angle_increment" value="$(arg scan_angle_increment)"/>
+    <param name="range_min" value="$(arg scan_range_min)"/>
+    <param name="range_max" value="$(arg scan_range_max)"/>
+    <param name="z_min" value="$(arg scan_z_min)"/>
+    <param name="z_max" value="$(arg scan_z_max)"/>
+    <param name="min_snr" value="$(arg scan_min_snr)"/>
+    <param name="temporal_window" value="$(arg temporal_window)"/>
+  </node>
+
+  <node pkg="iwrl6432_ros" type="radar_rviz_guides_node.py"
+        name="radar_rviz_guides" output="screen">
+    <param name="frame_id" value="base_link"/>
+    <param name="max_range" value="$(arg guide_max_range)"/>
+    <param name="ring_interval" value="$(arg guide_ring_interval)"/>
+    <param name="fov_deg" value="$(arg guide_fov_deg)"/>
+    <param name="publish_rate" value="1.0"/>
+    <param name="show_labels" value="true"/>
+  </node>
+
+  <node if="$(arg enable_manual_mapping)"
+        pkg="iwrl6432_ros" type="manual_pose_mapping_node.py"
+        name="manual_pose_mapping" output="screen">
+    <param name="input_topic" value="/radar/points"/>
+    <param name="output_topic" value="/radar/map_points"/>
+    <param name="map_frame" value="map"/>
+    <param name="pose_frame" value="base_link"/>
+    <param name="max_points" value="$(arg mapping_max_points)"/>
+    <param name="voxel_size" value="$(arg mapping_voxel_size)"/>
+    <param name="min_snr" value="15.0"/>
+    <param name="min_range" value="0.2"/>
+    <param name="max_range" value="3.0"/>
+    <param name="z_min" value="-0.5"/>
+    <param name="z_max" value="0.5"/>
+  </node>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find iwrl6432_ros)/config/iwrl6432.rviz"/>
+</launch>

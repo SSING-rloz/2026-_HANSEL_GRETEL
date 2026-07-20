@@ -1,0 +1,302 @@
+==================================================
+1. 프로젝트 개요
+==================================================
+
+이 프로젝트는 Ubuntu 20.04와 ROS1 Noetic에서 TI IWRL6432BOOST 레이더의 UART
+출력을 받아 실시간 환경 감지와 수동 mapping을 수행한다. 현재는 레이더를 로봇에
+바로 장착하지 않고 사람이 손으로 이동하며 mapping을 검증한다. handheld mapping이
+완성된 이후 로봇에 이식할 계획이다.
+
+완료된 기능:
+- UART 통신과 TI CFG 전송
+- TLV parsing
+- sensor_msgs/PointCloud2 발행
+- sensor_msgs/LaserScan 발행
+- RViz 시각화
+- 0.5 m 간격, 최대 3 m 전방 반원 가이드
+- 수동 pose 기반 누적 mapping
+
+==================================================
+2. 하드웨어 준비
+==================================================
+
+필요한 장비:
+- TI IWRL6432BOOST
+- 데이터 통신이 가능한 USB 케이블
+- Ubuntu 20.04 PC
+
+레이더 안테나가 바라보는 물리적 방향을 실험의 전방으로 정하고 RViz의 FRONT +X와
+실제 움직임이 일치하는지 확인한다. RESET_SW는 보드에 RESET_SW로 표기된 리셋
+버튼이며, UART와 펌웨어를 초기 시작 상태로 되돌릴 때 사용한다. 저장용 USB는
+실행에 필요하지 않으며 레이더 USB만 연결하면 된다.
+
+==================================================
+3. 실행 전 확인사항
+==================================================
+
+1) Ubuntu 버전과 ROS 배포판을 확인한다.
+
+명령:
+lsb_release -a
+echo $ROS_DISTRO
+
+정상 기준은 Ubuntu 20.04, ROS_DISTRO=noetic이다.
+
+2) 장치 파일을 확인한다.
+
+명령:
+ls -l /dev/ttyACM0 /dev/ttyACM1
+
+현재 구현에서 실제 CLI/데이터 통신 포트는 /dev/ttyACM0이다. /dev/ttyACM1은
+사용하지 않는다. 사용자는 dialout 그룹에 포함되어야 한다.
+
+명령:
+groups
+
+[주의] 이전 roslaunch가 남으면 UART busy가 발생할 수 있다. 같은 launch를 두 번
+실행하면 안 된다. 실행 직전에 RESET_SW를 한 번 눌러 초기 115200 baud 상태로
+만든다.
+
+==================================================
+4. 기본 실행 절차
+==================================================
+
+RESET_SW를 누른 뒤 다음 명령을 정확히 순서대로 실행한다.
+
+명령 1:
+source /opt/ros/noetic/setup.bash
+
+설명: 시스템에 설치된 ROS Noetic 명령과 패키지 환경을 현재 터미널에 불러온다.
+
+명령 2:
+source ~/catkin_ws/devel/setup.bash
+
+설명: catkin으로 빌드한 iwrl6432_ros 패키지를 ROS가 찾도록 workspace 환경을
+불러온다.
+
+명령 3:
+roslaunch iwrl6432_ros iwrl6432.launch
+
+설명: radar driver, LaserScan 변환, RViz guide, 수동 mapping, TF와 RViz를 한 번에
+실행한다.
+
+launch 후 자동 동작:
+- MotionDetect.cfg의 26개 명령 전송
+- UART 115200에서 baudRate 명령 후 1250000으로 전환
+- sensorStart
+- /radar/points, /radar/scan, /radar/rviz_guides 발행
+- /radar/map_points 발행자와 수동 mapping 서비스 준비
+- RViz 실행
+
+[주의] /radar/map_points의 실제 누적은 /radar/manual_pose가 한 번 입력된 후
+시작한다.
+
+==================================================
+5. RViz 화면 해석
+==================================================
+
+Fixed Frame은 수동 mapping 중 map이다. pose 입력 전에는 map 프레임이 아직 없어
+일시적인 빨간 상태가 보일 수 있다. pose를 입력하면 map -> base_link TF가 생긴다.
+
+- Radar Points: 현재 프레임의 레이더 PointCloud2
+- Radar Scan: 레이더 점을 각도 bin별 최근접 거리로 만든 LaserScan
+- Accumulated Radar Map: 수동 pose로 map 좌표에 누적한 포인트
+- Radar Guides: 방향, 거리, 위험 구간을 보여 주는 시각화
+- 빨간 축 +X: 전방
+- 초록 축 +Y: 왼쪽
+- 오른쪽: -Y
+- SENSOR ORIGIN: 레이더 기준 원점
+
+거리 반원은 전방에만 0.5, 1.0, 1.5, 2.0, 2.5, 3.0 m로 표시된다. Grid 한 칸은
+0.5 m다. 후방보다 전방 장애물 확인이 목적이므로 전방 반원만 사용한다.
+
+위험 구간:
+- 0~1 m COLLISION RISK: 충돌 위험
+- 1~2 m SLOW / AVOID: 감속·회피 판단
+- 2~3 m PATH PLANNING: 경로 계획
+
+==================================================
+6. 정상 동작 확인 방법
+==================================================
+
+명령:
+rostopic hz /radar/points
+rostopic hz /radar/scan
+
+정상 기준:
+- 두 토픽이 각각 약 4.7 Hz
+- 사람이 움직이면 Radar Points가 변함
+- Radar Scan ranges에 +inf뿐 아니라 유한 거리값도 존재
+- pose 입력 후 RViz display가 빨간 오류가 아님
+- TF 오류 없음
+- 시작 로그에 sensorStart의 Done 응답과 승인 로그가 있음
+- 종료 로그에 sensorStop 0 sent가 있음
+
+==================================================
+7. 수동 pose 기반 handheld mapping 시행 방법
+==================================================
+
+평평하고 이동하기 쉬우며 정면에 벽이나 큰 고정 장애물이 있는 장소를 선택한다.
+레이더 높이와 방향을 일정하게 유지한다. 바닥에 0 m, 0.5 m, 1.0 m 표시를 붙이는
+것을 권장한다.
+
+1) 기존 map 초기화
+
+명령:
+rosservice call /radar/clear_map
+
+2) 시작 pose 입력. publish_manual_pose.py의 yaw 기본 단위는 degree다.
+
+명령:
+rosrun iwrl6432_ros publish_manual_pose.py 0.0 0.0 0.0
+
+3) 시작 위치에서 2~3초 정지한다.
+4) 레이더를 FRONT +X 방향으로 0.5 m 이동한다.
+5) pose를 입력한다.
+
+명령:
+rosrun iwrl6432_ros publish_manual_pose.py 0.5 0.0 0.0
+
+6) 다시 2~3초 정지한다.
+7) 시작점 기준 1.0 m 위치까지 다시 0.5 m 이동한다.
+8) pose를 입력한다.
+
+명령:
+rosrun iwrl6432_ros publish_manual_pose.py 1.0 0.0 0.0
+
+9) Accumulated Radar Map에서 같은 벽과 장애물이 map 좌표에서 겹치는지 확인한다.
+
+90도 회전 예:
+rosrun iwrl6432_ros publish_manual_pose.py 1.0 0.0 90.0
+
+radian을 직접 입력할 때만 --radians를 사용한다.
+rosrun iwrl6432_ros publish_manual_pose.py 1.0 0.0 1.5708 --radians
+
+==================================================
+8. 장소를 변경했을 때
+==================================================
+
+기존 map을 반드시 초기화하고 pose를 다시 0,0,0으로 입력한다. 새 장소를 새 map의
+원점으로 사용하며 이전 장소의 0.5 m, 1.0 m pose 기록을 재사용하지 않는다.
+
+==================================================
+9. 정상 종료 방법
+==================================================
+
+roslaunch를 실행한 터미널에서 Ctrl+C를 누른다. `sensorStop 0 sent`를 확인하고
+fuser 또는 lsof로 /dev/ttyACM0 점유가 해제됐는지 확인한다. RViz만 남겨두지 않는다.
+launch 종료 후 토픽 발행도 끝나므로 남은 RViz display가 빨간색이 되는 것은
+정상이다.
+
+==================================================
+10. 자주 발생한 오류와 해결 방법
+==================================================
+
+A. UART port is busy: /dev/ttyACM0
+원인: 이전 launch 또는 중복 radar_driver.
+해결: iwrl6432_ros 관련 기존 프로세스만 정상 종료하고 fuser/lsof로 포트 해제를
+확인한 뒤 RESET_SW를 누르고 launch를 한 번만 실행한다.
+
+B. new node registered with same name
+원인: 동일 launch 중복 실행.
+해결: 기존 launch를 종료한 뒤 하나만 실행한다.
+
+C. RViz에 축만 보이고 점과 가이드가 없음
+원인: RViz만 남고 ROS 노드가 종료됨.
+해결: 잔여 RViz를 종료하고 RESET 후 roslaunch를 다시 실행해 유지한다.
+
+D. Radar Points와 Radar Scan이 빨간 상태
+원인: 토픽 미발행, driver 초기화 실패 또는 launch 종료.
+해결: 토픽, UART 점유, launch 상태를 확인하고 필요하면 RESET 후 재실행한다.
+
+E. CLI timeout
+원인: RESET되지 않은 UART, baud 상태 불일치 또는 초기 입력 지속.
+해결: 보드를 RESET하고 초기 115200에서 다시 시작한다. 현재 driver에는 quiet wait
+최대시간과 종료 보호가 적용되어 있다.
+
+F. 7 m 원이나 전체 원이 표시됨
+원인: 이전 guide/RViz 설정.
+정상 설정: 최대 3 m, 0.5 m 간격, 전방 반원, 위험 구간 3개.
+
+==================================================
+11. 현재 시스템의 한계
+==================================================
+
+- 자동 SLAM이 아니라 사람이 pose를 입력하는 수동 mapping
+- odometry와 IMU 없음
+- 자동 scan matching과 로봇 슬립 보상 없음
+- 프레임당 radar point 수가 적음
+- 벽이 LiDAR처럼 연속선으로 보이지 않을 수 있음
+- dynamic/static object 분리 미구현
+
+==================================================
+12. 앞으로의 개발 계획
+==================================================
+
+1. 정상 상태 백업
+2. rosbag 데이터 수집
+3. static 15초 실험
+4. 직선 1 m 이동 실험
+5. 90도 회전 실험
+6. L자 경로 실험
+7. 오프라인 scan matching
+8. radar odometry
+9. IMU 융합
+10. 자동 handheld mapping
+11. 로봇 이식
+12. wheel encoder + IMU + radar odometry 융합
+13. 슬립 및 걸림 감지
+
+==================================================
+13. 엔코더와 슬립 문제
+==================================================
+
+encoder는 바퀴 회전량만 측정하므로 공회전해도 이동했다고 판단할 수 있다. 로봇이
+장애물에 걸려도 encoder만 보면 정상 주행처럼 보일 수 있다. 최종 로봇에서는
+encoder 단독 사용을 피하고 encoder, IMU, radar scan matching을 결합해야 한다.
+encoder 이동량과 radar 환경 이동량의 차이는 slip 또는 걸림 판단에 활용할 수 있다.
+
+==================================================
+14. 현재 프로젝트 핵심 경로
+==================================================
+
+ROS package: ~/catkin_ws/src/iwrl6432_ros
+catkin workspace: ~/catkin_ws
+개발 작업 폴더: ~/iwrl6432_mapping_ws
+config: ~/catkin_ws/src/iwrl6432_ros/config/MotionDetect.cfg
+launch: ~/catkin_ws/src/iwrl6432_ros/launch/iwrl6432.launch
+RViz: ~/catkin_ws/src/iwrl6432_ros/config/iwrl6432.rviz
+
+주요 scripts:
+- scripts/radar_driver_node.py
+- scripts/radar_to_laserscan_node.py
+- scripts/radar_rviz_guides_node.py
+- scripts/manual_pose_mapping_node.py
+- scripts/publish_manual_pose.py
+
+parser: src/iwrl6432_ros/radar_parser.py
+
+==================================================
+15. 실행 체크리스트
+==================================================
+
+실행 전:
+[ ] 레이더 USB 연결
+[ ] /dev/ttyACM0 확인
+[ ] 이전 launch 종료
+[ ] RESET_SW 한 번
+[ ] ROS Noetic source
+[ ] catkin workspace source
+
+실행 중:
+[ ] /radar/points 발행
+[ ] /radar/scan 발행
+[ ] 가이드 표시
+[ ] TF 오류 없음
+[ ] launch 중복 실행 없음
+
+종료:
+[ ] Ctrl+C
+[ ] sensorStop 0 sent
+[ ] 포트 점유 해제
+[ ] RViz와 관련 노드 종료
