@@ -58,9 +58,37 @@ Pose2D를 입력하는 handheld mapping 단계이며, 이후 자동 radar odomet
 
 ## H. 다음 개발 단계
 
-1. rosbag 데이터 수집
-2. static 15초, 직선 1 m, 90° 회전, L자 경로 실험
-3. 오프라인 scan matching
-4. radar odometry
-5. IMU 융합
-6. 로봇 encoder와 결합
+1. rosbag recorder/inspector 코드 준비 및 비하드웨어 테스트
+2. `static_15s` 실제 데이터 수집
+3. 직선 1 m, 90° 회전, L자 경로 실험
+4. 오프라인 scan matching
+5. radar odometry
+6. IMU 융합
+7. 로봇 encoder와 결합
+
+## I. rosbag 도구 상태
+
+- recorder: 필수 토픽 사전 검사, Hz 측정, 정상 신호 종료, YAML 생성 지원
+- inspector: point/scan/TF/공백 통계와 odometry 사용 가능 PASS/WARNING/FAIL 판정 지원
+- 기본 bag 위치: `~/iwrl6432_mapping_ws/bags`
+- Python 정적 검사, 오류 처리, 가짜 10 Hz bag, SIGINT, YAML, inspector, catkin 빌드 통과
+- 실제 레이더 `static_15s` 기록은 사용자 준비 후 별도로 수행
+
+## J. 첫 실제 `static_15s` 결과
+
+- 2026-07-20 21:06 KST 수집 완료, SIGINT 정상 종료 및 YAML 생성
+- bag 길이 14.836초, points/scan 약 4.70 Hz, 필수 radar 토픽 장시간 공백 없음
+- inspector `WARNING`: point가 매우 희소하고 빈 scan이 연속되는 구간 존재
+- recorder와 inspector 동작은 정상이나 odometry 학습/개발용 데이터 품질은 개선 권장
+- 다음 단계 전 고정 특징물이 풍부한 환경에서 static 실험 재수집 여부를 결정
+
+## K. 실시간 3D Rolling Local Map
+
+- 별도 `iwrl6432_live_3d.launch` 실행 성공
+- `/radar/points_3d_filtered` 약 4.703 Hz, `/radar/rolling_map_3d` 10 Hz
+- radar_link 기준 최근 4초 frame, voxel 0.05 m, 최대 50,000점 관리
+- 수평 총 120도, elevation -10도~+60도, 1/2/3 m 3D wireframe 표시
+- clear 및 pause/resume 서비스 제공
+- 전역 SLAM이 아니며 레이더 이동 시 cloud도 local frame을 따라 이동
+- 실제 MotionDetect raw 표본 31점의 z는 모두 0.0. 3D elevation 기능은 가짜 입력으로 검증
+- 기존 driver/parser/LaserScan/manual mapping/MotionDetect.cfg는 변경하지 않음

@@ -27,3 +27,17 @@ rosservice call /radar/clear_map
 
 [주의] 같은 launch를 두 번 실행하지 않는다. 종료는 launch 터미널에서 Ctrl+C로
 수행하고 `sensorStop 0 sent`를 확인한다. RViz만 따로 남겨두지 않는다.
+
+## rosbag 실험 데이터 수집
+
+레이더 토픽이 정상 발행되는 것을 확인한 뒤 별도로 실행한다. 일반 launch에는 recorder가
+포함되지 않으므로 의도하지 않은 기록은 시작되지 않는다.
+
+```bash
+rosrun iwrl6432_ros radar_bag_recorder.py static_15s
+rosrun iwrl6432_ros inspect_radar_bag.py ~/iwrl6432_mapping_ws/bags/<bag파일>.bag
+```
+
+기본 저장 위치는 `~/iwrl6432_mapping_ws/bags`이다. Ctrl+C로 정상 종료하면 같은 이름의
+YAML이 생성된다. 실험 순서는 `static_15s`, `straight_1m`, `rotate_90deg`, `l_shape`이다.
+bag은 용량이 크고 원본 실험 데이터이므로 Git에 포함하지 않는다.

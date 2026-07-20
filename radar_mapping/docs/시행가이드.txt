@@ -300,3 +300,91 @@ parser: src/iwrl6432_ros/radar_parser.py
 [ ] sensorStop 0 sent
 [ ] 포트 점유 해제
 [ ] RViz와 관련 노드 종료
+
+==================================================
+16. Radar odometry용 rosbag 데이터 수집
+==================================================
+
+목적:
+- 자동 radar odometry를 실시간 구현하기 전에 동일한 센서 데이터를 반복 재생한다.
+- 알고리즘 변경 전후를 같은 입력으로 비교하고 실패를 재현한다.
+
+기본 bag 저장 위치:
+~/iwrl6432_mapping_ws/bags
+
+레이더 launch와 필수 토픽이 정상인 상태에서 recorder를 별도로 실행한다.
+일반 iwrl6432.launch에는 자동 recorder가 없다.
+
+rosrun iwrl6432_ros radar_bag_recorder.py static_15s
+
+종료는 Ctrl+C를 사용한다. 정상 종료되면 bag과 같은 이름의 YAML이 생성된다.
+검사는 다음과 같이 실행한다.
+
+rosrun iwrl6432_ros inspect_radar_bag.py ~/iwrl6432_mapping_ws/bags/<파일>.bag
+
+실험 순서:
+1. static_15s
+2. straight_1m
+3. rotate_90deg
+4. l_shape
+
+bag은 크기가 크고 재생 가능한 원본 실험 데이터이므로 Git에 포함하지 않는다.
+실측하지 않은 이동 거리, 회전각, 환경, 센서 높이는 YAML에 추측해서 쓰지 않는다.
+
+첫 static 실험 점검:
+- points/scan의 1초 초과 공백이 없어야 한다.
+- 빈 PointCloud2 비율과 finite scan 개수를 확인한다.
+- WARNING이면 벽, 기둥, 상자 등 고정 특징물이 더 잘 보이도록 배치한 뒤 재수집한다.
+- 현재 고정 transform은 /tf에서 발행된다. /tf_static publisher가 없다는 이유만으로
+  정상 launch 파일을 변경하지 않는다.
+
+==================================================
+17. 실시간 3D Rolling Local Map
+==================================================
+
+실행:
+source /opt/ros/noetic/setup.bash
+source ~/catkin_ws/devel/setup.bash
+roslaunch iwrl6432_ros iwrl6432_live_3d.launch
+
+기존 iwrl6432.launch와 동시에 실행하지 않는다. 이 기능은 전역 3D SLAM이나 map 고정
+지도화가 아니다. radar_link 기준 최근 4초 포인트를 유지하는 local visualization이며,
+레이더를 움직이면 cloud도 레이더 좌표를 따라 움직인다.
+
+기본 필터:
+- range 0.2~3.0 m
+- elevation -10도~+60도, 양 경계 포함
+- SNR 15 이상
+- history_sec 4초
+- voxel 0.05 m
+
+토픽:
+- /radar/points_3d_filtered
+- /radar/rolling_map_3d
+- /radar/rviz_guides_3d
+
+서비스:
+- /radar/clear_rolling_map_3d
+- /radar/pause_rolling_map_3d (true: 유지/정지, false: 재개)
+
+RViz는 Orbit 카메라를 마우스로 회전하여 측면에서 YZ 높이를 확인한다. AxisColor의 Z축
+색 변화로 높이를 구분한다. RViz Decay Time은 0이며 history는 노드가 직접 관리한다.
+현재 실제 MotionDetect 출력에서는 z가 모두 0.0으로 관측돼 포인트가 평면에 보일 수 있다.
+전역 좌표 고정과 이동 보상을 위해서는 향후 IMU 또는 radar odometry가 필요하다.
+
+3D RViz 방향 가이드:
+- RViz 기본 축 색상은 X 빨강, Y 초록, Z 파랑이다.
+- /radar/points frame은 radar_link이고 실제 센서 정면은 radar +Y이다.
+- RADAR FRONT: +Y, 길이 1.0 m
+- LEFT: -X, RIGHT: +X, 각각 길이 0.7 m
+- UP: +Z, 길이 0.7 m
+- SENSOR ORIGIN: radar_link 원점
+
+실제 확인 근거:
+- 정면 앞뒤 이동에서 y가 0~2.301 m로 변화
+- 왼쪽 이동 85점 중 78점이 x<0
+- 오른쪽 이동 60점 중 56점이 x>0
+
+base_link -> radar_link yaw -90도 변환으로 radar +Y는 base +X가 된다. 센서 장착
+방향에 따라 ROS 기본 축과 실제 정면이 다를 수 있으므로 XYZ 색만 보고 추측하지 않는다.
+3D FOV는 radar +Y 중심, 좌우 ±60도, elevation -10~+60도로 정렬돼 있다.

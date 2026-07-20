@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Offline parser for xWRL6432 Motion/Presence demo UART packets.
 
-Official SDK evidence (all offsets are little-endian, as documented in the
-MMWAVE-L-SDK 05.05.04.02 Motion and Presence demo sources). The reference paths
-below identify files inside the TI SDK and are not redistributed here:
+Official local SDK evidence (all offsets are little-endian, as documented in
+reference/MOTION_AND_PRESENCE_DETECTION_DEMO.html:1278-1302):
 
 * MmwDemo_output_message_header: reference/motion_detect.h:1350-1378 (40 B)
 * MmwDemo_output_message_tl: reference/motion_detect.h:326-334 (8 B)

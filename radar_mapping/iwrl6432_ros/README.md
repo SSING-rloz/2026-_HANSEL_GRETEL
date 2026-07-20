@@ -31,7 +31,7 @@ roslaunch iwrl6432_ros iwrl6432.launch
 ```
 
 발행 토픽은 `/radar/points`, 기준 프레임은 `radar_link`입니다. launch 파일은
-`base_link -> radar_link` yaw -π/2 static TF와 RViz를 함께 실행합니다. RViz는 `snr`
+`base_link -> radar_link` identity static TF와 RViz를 함께 실행합니다. RViz는 `snr`
 필드를 Intensity 색상으로 사용합니다.
 
 주요 launch 인자는 `port`, `config_file`, `frame_id`, `min_snr`, `min_range`,

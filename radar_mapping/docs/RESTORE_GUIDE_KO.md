@@ -61,3 +61,11 @@ lsof /dev/ttyACM0
 
 점유가 사라진 뒤 RESET_SW를 누르고 launch를 한 번만 실행한다. 정상 종료는 launch
 터미널에서 Ctrl+C이며 `sensorStop 0 sent`를 확인한다.
+
+## 5. rosbag 도구와 데이터 복구
+
+`scripts/radar_bag_recorder.py`, `scripts/inspect_radar_bag.py`의 실행 권한과
+`CMakeLists.txt` 설치 항목을 확인한 후 `catkin_make`한다. bag 기본 위치는
+`~/iwrl6432_mapping_ws/bags`이며, bag과 같은 이름의 YAML을 함께 보존한다. bag은
+Git 복구 대상이 아니므로 별도 로컬/외장 백업에서 복구한다. `.active` 파일은 정상 완료된
+bag으로 간주하지 않는다.
