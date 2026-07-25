@@ -1,0 +1,150 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: [/Global Options1, /Dynamic Points1, /Dynamic Tracks1]
+      Splitter Ratio: 0.55
+    Tree Height: 680
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.4
+      Cell Size: 0.5
+      Class: rviz/Grid
+      Color: 120; 120; 120
+      Enabled: true
+      Line Style: {Line Width: 0.03, Value: Lines}
+      Name: Grid
+      Normal Cell Count: 0
+      Offset: {X: 0, Y: 0, Z: 0}
+      Plane: XY
+      Plane Cell Count: 16
+      Reference Frame: radar_link
+      Value: true
+    - Class: rviz/Axes
+      Enabled: true
+      Length: 0.25
+      Name: Radar Axes
+      Radius: 0.018
+      Reference Frame: radar_link
+      Value: true
+    - Alpha: 0.65
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds: {Max Value: 10, Min Value: -10, Value: true}
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 190; 190; 190
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: Filtered Radar Points
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 4
+      Size (m): 0.025
+      Style: Points
+      Topic: /radar/points_3d_filtered
+      Unreliable: false
+      Use Fixed Frame: true
+      Value: true
+    - Alpha: 0.35
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds: {Max Value: 10, Min Value: -10, Value: true}
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 80; 120; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Name: 3D Rolling Local Cloud
+      Position Transformer: XYZ
+      Queue Size: 20
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.03
+      Style: Points
+      Topic: /radar/rolling_map_3d
+      Unreliable: false
+      Use Fixed Frame: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds: {Max Value: 5, Min Value: -5, Value: true}
+      Axis: Z
+      Channel Name: doppler
+      Class: rviz/PointCloud2
+      Color: 255; 70; 40
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 30; 30
+      Min Color: 30; 255; 255
+      Name: Dynamic Points
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 10
+      Size (m): 0.07
+      Style: Spheres
+      Topic: /radar/dynamic_points_3d
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /radar/rviz_guides_3d
+      Name: Radar 3D FOV and Direction Labels
+      Namespaces: {radar_3d_fov: true}
+      Queue Size: 10
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /radar/dynamic_markers
+      Name: Dynamic Tracks
+      Namespaces:
+        dynamic_box: true
+        dynamic_centroid: true
+        dynamic_doppler: true
+        dynamic_text: true
+      Queue Size: 20
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 32; 32; 38
+    Default Light: true
+    Fixed Frame: radar_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - {Class: rviz/Interact, Hide Inactive Objects: true}
+    - {Class: rviz/MoveCamera}
+    - {Class: rviz/Select}
+    - {Class: rviz/FocusCamera}
+  Value: true
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 5.5
+      Focal Point: {X: 0, Y: 1.2, Z: 0.45}
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.62
+      Target Frame: radar_link
+      Yaw: 3.14
+    Saved: ~
+Window Geometry:
+  Displays: {collapsed: false}
+  Height: 900
+  Hide Left Dock: false
+  Hide Right Dock: true
+  Width: 1300
+  X: 80
+  Y: 40

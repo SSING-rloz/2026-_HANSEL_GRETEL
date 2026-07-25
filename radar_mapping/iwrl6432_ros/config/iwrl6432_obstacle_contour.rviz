@@ -1,0 +1,74 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Name: Grid
+      Plane: XY
+      Cell Size: 0.2
+      Plane Cell Count: 15
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Radar Guides
+      Marker Topic: /radar/rviz_guides
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Radar Points
+      Topic: /radar/points
+      Style: Spheres
+      Size (m): 0.032
+      Color Transformer: Intensity
+      Channel Name: snr
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Filtered Points (current frame)
+      Topic: /radar/filtered_points
+      Style: Spheres
+      Size (m): 0.015
+      Color Transformer: FlatColor
+      Color: 30; 230; 230
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Obstacle Clusters
+      Topic: /radar/obstacle_clusters
+      Style: Spheres
+      Size (m): 0.050
+      Color Transformer: AxisColor
+      Axis: Y
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Obstacle Outlines
+      Marker Topic: /radar/obstacle_outlines
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Traversable Gaps and Recommended Heading
+      Marker Topic: /radar/traversable_gaps
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Debug Markers
+      Marker Topic: /radar/obstacle_debug
+      Enabled: false
+  Enabled: true
+  Global Options:
+    Background Color: 18; 21; 25
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Name: Top-down Obstacle Gaps
+      Angle: 0
+      Scale: 180
+      X: 0.45
+      Y: 0
+Window Geometry:
+  Height: 850
+  Width: 1250

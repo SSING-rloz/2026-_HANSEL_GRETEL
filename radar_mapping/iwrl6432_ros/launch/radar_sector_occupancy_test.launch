@@ -1,0 +1,72 @@
+<launch>
+  <arg name="port" default="/dev/ttyACM0"/>
+  <arg name="cfg_file" default="$(find iwrl6432_ros)/config/StaticObstacleNearField1m.cfg"/>
+  <arg name="background_profile_path" default="/tmp/iwrl6432_sector_occupancy/background_profile.yaml"/>
+  <arg name="background_neighbor_voxel_radius" default="0"/>
+  <arg name="sector_min_z" default="-inf"/>
+  <arg name="sector_max_z" default="inf"/>
+  <arg name="valid_min_range_m" default="0.10"/>
+  <arg name="max_range_m" default="1.00"/>
+  <arg name="min_snr_db" default="8.0"/>
+  <arg name="front_fov_deg" default="120.0"/>
+  <arg name="sector_count" default="5"/>
+  <arg name="persistence_frames" default="3"/>
+  <arg name="enable_low_occupancy_corridor" default="true"/>
+  <arg name="start_rviz" default="true"/>
+
+  <node pkg="tf" type="static_transform_publisher" name="base_to_radar"
+        args="0 0 0 -1.57079632679 0 0 base_link radar_link 100"/>
+  <node pkg="iwrl6432_ros" type="radar_driver_node.py" name="radar_driver"
+        output="screen" required="true">
+    <param name="port" value="$(arg port)"/>
+    <param name="config_file" value="$(arg cfg_file)"/>
+    <param name="frame_id" value="radar_link"/>
+    <param name="min_snr" value="0.0"/>
+    <param name="min_range" value="0.0"/><param name="max_range" value="20.0"/>
+    <param name="z_min" value="-10.0"/><param name="z_max" value="10.0"/>
+  </node>
+  <node pkg="iwrl6432_ros" type="radar_sector_occupancy_node.py"
+        name="radar_sector_occupancy" output="screen">
+    <param name="frame_id" value="base_link"/>
+    <param name="background_profile_path" value="$(arg background_profile_path)"/>
+    <param name="background_neighbor_voxel_radius"
+           value="$(arg background_neighbor_voxel_radius)"/>
+    <param name="sector_min_z" value="$(arg sector_min_z)"/>
+    <param name="sector_max_z" value="$(arg sector_max_z)"/>
+    <param name="valid_min_range_m" value="$(arg valid_min_range_m)"/>
+    <param name="max_range_m" value="$(arg max_range_m)"/>
+    <param name="min_snr_db" value="$(arg min_snr_db)"/>
+    <param name="front_fov_deg" value="$(arg front_fov_deg)"/>
+    <param name="sector_count" value="$(arg sector_count)"/>
+    <param name="persistence_frames" value="$(arg persistence_frames)"/>
+    <param name="voxel_size_m" value="0.02"/>
+    <param name="density_saturation_voxels" value="3"/>
+    <param name="presence_weight" value="0.50"/>
+    <param name="distance_weight" value="0.35"/>
+    <param name="density_weight" value="0.15"/>
+    <param name="occupied_threshold" value="0.55"/>
+    <param name="minimum_clear_sector_count" value="1"/>
+    <param name="enable_low_occupancy_corridor"
+           value="$(arg enable_low_occupancy_corridor)"/>
+    <param name="corridor_inner_range_m" value="$(arg valid_min_range_m)"/>
+    <param name="corridor_outer_range_m" value="$(arg max_range_m)"/>
+    <param name="corridor_floor_z_m" value="0.00"/>
+    <param name="corridor_marker_alpha" value="0.15"/>
+    <param name="show_sector_3d_guide" value="true"/>
+    <param name="sector_3d_min_z_m" value="-0.40"/>
+    <param name="sector_3d_max_z_m" value="0.40"/>
+  </node>
+  <node pkg="iwrl6432_ros" type="radar_rviz_guides_node.py"
+        name="radar_rviz_guides" output="screen">
+    <param name="frame_id" value="base_link"/>
+    <param name="max_range" value="$(arg max_range_m)"/>
+    <param name="ring_interval" value="0.2"/>
+    <param name="fov_deg" value="60.0"/>
+    <param name="publish_rate" value="1.0"/>
+    <param name="show_labels" value="true"/>
+    <param name="show_front_arrow" value="false"/>
+    <param name="show_fov_boundaries" value="false"/>
+  </node>
+  <node if="$(arg start_rviz)" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find iwrl6432_ros)/rviz/radar_sector_occupancy_3d.rviz"/>
+</launch>

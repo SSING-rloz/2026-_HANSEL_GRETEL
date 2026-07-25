@@ -1,0 +1,114 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Name: Grid
+      Plane: XY
+      Cell Size: 0.2
+      Plane Cell Count: 12
+      Alpha: 0.35
+      Color: 110; 115; 122
+      Enabled: true
+    - Class: rviz/TF
+      Name: TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.25
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+    - Class: rviz/Axes
+      Name: Base Axes
+      Reference Frame: base_link
+      Length: 0.18
+      Radius: 0.008
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Raw Radar Points
+      Topic: /radar/points
+      Style: Points
+      Size (Pixels): 3
+      Size (m): 0.015
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+      Queue Size: 10
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Sector Points
+      Topic: /radar/sector_points
+      Style: Spheres
+      Size (m): 0.020
+      Color Transformer: Intensity
+      Channel Name: snr
+      Decay Time: 0
+      Queue Size: 10
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Background Points
+      Topic: /radar/background_points
+      Style: Spheres
+      Size (m): 0.020
+      Color Transformer: FlatColor
+      Color: 145; 145; 155
+      Alpha: 0.55
+      Decay Time: 0
+      Queue Size: 10
+      Enabled: false
+    - Class: rviz/MarkerArray
+      Name: Sector Occupancy Simple Markers
+      Marker Topic: /radar/sector_markers
+      Queue Size: 20
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Low-Occupancy Corridor Simple Markers
+      Marker Topic: /radar/low_occupancy_corridor_markers
+      Queue Size: 20
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Distance Arcs and Labels
+      Marker Topic: /radar/rviz_guides
+      Queue Size: 5
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Existing Obstacle Outlines
+      Marker Topic: /radar/obstacle_outlines
+      Enabled: false
+    - Class: rviz/MarkerArray
+      Name: Existing Traversable Gaps
+      Marker Topic: /radar/traversable_gaps
+      Enabled: false
+  Enabled: true
+  Global Options:
+    Background Color: 20; 23; 29
+    Default Light: true
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 1.65
+      Focal Point:
+        X: 0.52
+        Y: 0
+        Z: 0.04
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.04
+      Invert Z Axis: false
+      Near Clip Distance: 0.01
+      Pitch: 0.78
+      Target Frame: base_link
+      Yaw: 3.14
+Window Geometry:
+  Height: 880
+  Width: 1300
+  Hide Right Dock: true

@@ -1,0 +1,74 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Name: Ground Grid
+      Plane: XY
+      Cell Size: 0.5
+      Plane Cell Count: 20
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Radar Guides
+      Marker Topic: /radar/rviz_guides
+      Enabled: true
+    - Class: rviz/PointCloud2
+      Name: Radar Points
+      Topic: /radar/points
+      Style: Spheres
+      Size (m): 0.07
+      Color Transformer: Intensity
+      Channel Name: snr
+      Enabled: true
+    - Class: rviz/LaserScan
+      Name: Radar Scan
+      Topic: /radar/scan
+      Size (m): 0.05
+      Style: Points
+      Color: 255; 255; 0
+      Enabled: true
+    - Class: rviz/Marker
+      Name: Obstacle Contour
+      Marker Topic: /radar/obstacle_contour
+      Enabled: true
+    - Class: rviz/Polygon
+      Name: Free-space Polygon
+      Topic: /radar/free_space
+      Color: 40; 210; 210
+      Alpha: 0.45
+      Enabled: true
+    - Class: rviz/Map
+      Name: Local OccupancyGrid
+      Topic: /radar/local_occupancy
+      Alpha: 0.55
+      Color Scheme: map
+      Draw Behind: true
+      Enabled: true
+    - Class: rviz/MarkerArray
+      Name: Traversable Corridors and Recommended Heading
+      Marker Topic: /radar/traversable_markers
+      Enabled: true
+  Enabled: true
+  Global Options:
+    Background Color: 35; 35; 35
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Name: Top-down Local Free Space
+      Angle: 0
+      Scale: 70
+      X: 1.5
+      Y: 0
+Window Geometry:
+  Height: 850
+  Width: 1250
