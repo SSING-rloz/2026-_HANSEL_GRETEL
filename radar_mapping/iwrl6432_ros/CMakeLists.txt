@@ -2,10 +2,10 @@ cmake_minimum_required(VERSION 3.0.2)
 project(iwrl6432_ros)
 
 find_package(catkin REQUIRED COMPONENTS
-  geometry_msgs rospy sensor_msgs std_msgs std_srvs tf tf2_ros visualization_msgs)
+  geometry_msgs nav_msgs rospy sensor_msgs std_msgs std_srvs tf tf2_ros visualization_msgs)
 catkin_python_setup()
 catkin_package(CATKIN_DEPENDS
-  geometry_msgs rospy sensor_msgs std_msgs std_srvs tf tf2_ros visualization_msgs)
+  geometry_msgs nav_msgs rospy sensor_msgs std_msgs std_srvs tf tf2_ros visualization_msgs)
 
 catkin_install_python(PROGRAMS
   scripts/inspect_radar_bag.py
@@ -13,9 +13,14 @@ catkin_install_python(PROGRAMS
   scripts/publish_manual_pose.py
   scripts/radar_3d_fov_guides_node.py
   scripts/radar_3d_rolling_map_node.py
+  scripts/radar_dynamic_tracker_node.py
+  scripts/radar_free_space_node.py
+  scripts/radar_obstacle_contour_node.py
   scripts/radar_bag_recorder.py
+  scripts/radar_background_calibrator.py
   scripts/radar_driver_node.py
   scripts/radar_rviz_guides_node.py
+  scripts/radar_sector_occupancy_node.py
   scripts/radar_to_laserscan_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
@@ -23,7 +28,11 @@ if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_manual_pose_mapping.py)
   catkin_add_nosetests(test/test_radar_3d_fov_guides.py)
   catkin_add_nosetests(test/test_radar_3d_rolling_map.py)
+  catkin_add_nosetests(test/test_radar_dynamic_tracker.py)
+  catkin_add_nosetests(test/test_radar_free_space.py)
+  catkin_add_nosetests(test/test_radar_obstacle_contour.py)
+  catkin_add_nosetests(test/test_radar_sector_occupancy.py)
 endif()
 
-install(DIRECTORY launch config
+install(DIRECTORY launch config rviz
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

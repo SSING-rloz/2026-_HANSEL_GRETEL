@@ -1,0 +1,50 @@
+<launch>
+  <arg name="port" default="/dev/ttyACM0"/>
+  <arg name="cfg_file" default="$(find iwrl6432_ros)/config/StaticObstacleNearField1m.cfg"/>
+  <arg name="valid_min_range_m" default="0.10"/>
+  <arg name="max_range_m" default="1.0"/>
+  <arg name="min_snr_db" default="8.0"/>
+  <arg name="front_fov_deg" default="120.0"/>
+  <arg name="history_frames" default="8"/>
+  <arg name="history_duration_sec" default="1.5"/>
+  <arg name="voxel_size_m" default="0.02"/>
+  <arg name="cluster_eps_m" default="0.15"/>
+  <arg name="cluster_min_points" default="2"/>
+  <arg name="robot_width_m" default="0.35"/>
+  <arg name="safety_margin_m" default="0.025"/>
+  <arg name="min_gap_width_m" default="0.40"/>
+  <arg name="start_rviz" default="true"/>
+
+  <node pkg="tf" type="static_transform_publisher" name="base_to_radar"
+        args="0 0 0 -1.57079632679 0 0 base_link radar_link 100"/>
+  <node pkg="iwrl6432_ros" type="radar_driver_node.py" name="radar_driver" output="screen" required="true">
+    <param name="port" value="$(arg port)"/><param name="config_file" value="$(arg cfg_file)"/>
+    <param name="frame_id" value="radar_link"/><param name="min_snr" value="0.0"/>
+    <param name="min_range" value="0.0"/><param name="max_range" value="20.0"/>
+    <param name="z_min" value="-10.0"/><param name="z_max" value="10.0"/>
+  </node>
+  <node pkg="iwrl6432_ros" type="radar_rviz_guides_node.py" name="radar_rviz_guides" output="screen">
+    <param name="frame_id" value="base_link"/><param name="max_range" value="1.0"/>
+    <param name="ring_interval" value="0.2"/><param name="fov_deg" value="60.0"/>
+  </node>
+  <node pkg="iwrl6432_ros" type="radar_obstacle_contour_node.py"
+        name="radar_obstacle_contour" output="screen">
+    <param name="frame_id" value="base_link"/>
+    <param name="valid_min_range_m" value="$(arg valid_min_range_m)"/>
+    <param name="max_range_m" value="$(arg max_range_m)"/>
+    <param name="min_z_m" value="-0.10"/><param name="max_z_m" value="0.60"/>
+    <param name="min_snr_db" value="$(arg min_snr_db)"/>
+    <param name="front_fov_deg" value="$(arg front_fov_deg)"/>
+    <param name="history_duration_sec" value="$(arg history_duration_sec)"/>
+    <param name="voxel_size_m" value="$(arg voxel_size_m)"/>
+    <param name="max_accumulated_points" value="3000"/>
+    <param name="cluster_eps_m" value="$(arg cluster_eps_m)"/>
+    <param name="cluster_min_points" value="$(arg cluster_min_points)"/>
+    <param name="history_frames" value="$(arg history_frames)"/>
+    <param name="robot_width_m" value="$(arg robot_width_m)"/>
+    <param name="safety_margin_m" value="$(arg safety_margin_m)"/>
+    <param name="min_gap_width_m" value="$(arg min_gap_width_m)"/>
+  </node>
+  <node if="$(arg start_rviz)" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find iwrl6432_ros)/config/iwrl6432_obstacle_contour.rviz"/>
+</launch>
